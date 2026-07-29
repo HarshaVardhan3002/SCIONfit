@@ -3,40 +3,41 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "scionfit"
+name = "scionarena"
 version = "0.1.0"
-description = "Conformance and fit checking for SCION path-selection models"
+description = "A SCION network exposed to an AI recommendation node, and everything that happens"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["scion", "path-aware networking", "benchmark", "conformance",
-            "multipath", "machine learning"]
+            "multipath", "machine learning", "reinforcement learning", "agent"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: System :: Networking",
 ]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-cov", "ruff"]
+dev = ["pytest>=7", "pytest-cov", "ruff", "mypy>=1.8", "import-linter>=2.0", "pre-commit"]
 
 [project.scripts]
-scionfit = "scionfit.cli:main"
+scionarena = "scionarena.cli:main"
+scionfit = "scionarena.conformance.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scionfit"]
+packages = ["src/scionarena"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
@@ -44,3 +45,49 @@ ignore = ["E501", "B008", "C408", "SIM105", "SIM108"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F841"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/scionarena/core", "src/scionarena/exposure"]
+
+[tool.importlinter]
+root_package = "scionarena"
+
+# core <- exposure <- {conformance, bench, gym, agent, deploy}
+# Front-ends are siblings: none of them may import another.
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+  "scionarena.conformance : scionarena.bench : scionarena.gym : scionarena.agent : scionarena.deploy",
+  "scionarena.exposure",
+  "scionarena.core",
+]
+
+# Seam D: a model is written against the exposure layer and nothing else.
+# reference/ stands in for every user model, so what it may not do, they may not do.
+[[tool.importlinter.contracts]]
+name = "Models never reach into the substrate"
+type = "forbidden"
+source_modules = ["scionarena.reference"]
+forbidden_modules = ["scionarena.core", "scionarena.backends", "scionarena.conformance"]
+
+# Backends are deliberately absent from the layers contract until M1: the v0.1
+# analytical world is written against the exposure contracts rather than against
+# core, which is upside down. M1 rewrites it and it joins the contract then.
+[[tool.importlinter.contracts]]
+name = "Substrate depends on nothing above it"
+type = "forbidden"
+source_modules = ["scionarena.core"]
+forbidden_modules = [
+  "scionarena.exposure",
+  "scionarena.backends",
+  "scionarena.conformance",
+  "scionarena.bench",
+  "scionarena.gym",
+  "scionarena.agent",
+  "scionarena.deploy",
+  "scionarena.instrument",
+  "scionarena.reference",
+]

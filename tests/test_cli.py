@@ -1,4 +1,4 @@
-from scionfit.cli import main
+from scionarena.conformance.cli import main
 
 
 def test_list(capsys):

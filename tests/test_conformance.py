@@ -1,9 +1,9 @@
 """The suite is only worth anything if it separates good models from bad ones."""
 import pytest
 
-from scionfit import check
-from scionfit.probes.base import Status
-from scionfit.reference import (
+from scionarena import check
+from scionarena.conformance.probes.base import Status
+from scionarena.reference import (
     CapacityProportional,
     EMAOracle,
     MinRTTGreedy,

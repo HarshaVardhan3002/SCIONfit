@@ -1,0 +1,3 @@
+# One line ending everywhere. A trace hash test that passes on Linux and fails
+# on Windows because a file was checked out with CRLF is a waste of a day.
+* text=auto eol=lf

@@ -1,4 +1,4 @@
-"""Command line interface: ``scionfit check ...``"""
+"""Command line interface: ``scionarena conformance check ...``"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import importlib
 import sys
 
-from .reference import REFERENCE_MODELS
+from ..reference import REFERENCE_MODELS
 from .runner import check, comparison_table
 
 
@@ -26,7 +26,7 @@ def _load(spec: str):
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        prog="scionfit",
+        prog="scionarena conformance",
         description="Conformance and fit checking for SCION path-selection models.",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)

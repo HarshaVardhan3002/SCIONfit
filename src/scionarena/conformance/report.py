@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from .interface import Capabilities
+from ..exposure.contracts import Capabilities
 from .probes.base import ProbeResult, Status
 
 GLYPH = {
@@ -28,7 +28,7 @@ class ReportCard:
     results: list[ProbeResult] = field(default_factory=list)
     world_seed: int = 0
     scionfit_version: str = "0.1.0"
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     # ---------------- verdicts ----------------
 

@@ -2,7 +2,7 @@
 
 Run it:  python examples/my_model.py
 """
-from scionfit import Advisory, Capabilities, Dist, Prediction, check
+from scionarena import Advisory, Capabilities, Dist, Prediction, check
 
 
 class NaiveAverager:

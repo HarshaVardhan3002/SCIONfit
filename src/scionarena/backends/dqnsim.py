@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..interface import InterfaceAttrs, PathRef, TopologySnapshot
+from ..exposure.contracts import InterfaceAttrs, PathRef, TopologySnapshot
 
 LINK_TYPE_MAP = {
     "core": "core", "CORE": "core",

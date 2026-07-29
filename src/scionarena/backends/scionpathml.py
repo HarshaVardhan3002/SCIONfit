@@ -15,7 +15,7 @@ import csv
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..interface import Observation
+from ..exposure.contracts import Observation
 
 #: our field <- their column. Verify against a real export before use.
 COLUMN_MAP = {

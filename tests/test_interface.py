@@ -1,6 +1,6 @@
 import pytest
 
-from scionfit import Advisory, Dist, Prediction
+from scionarena import Advisory, Dist, Prediction
 
 
 def test_point_estimate_is_not_distributional():

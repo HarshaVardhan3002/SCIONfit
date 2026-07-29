@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any
 
 
-class Status(str, Enum):
+class Status(str, Enum):  # noqa: UP042  StrEnum would change str(Status.PASS)
     PASS = "PASS"
     FAIL = "FAIL"
     WEAK = "WEAK"                      # satisfied, but marginally

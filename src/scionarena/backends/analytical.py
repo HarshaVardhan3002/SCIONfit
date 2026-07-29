@@ -16,7 +16,7 @@ import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..interface import (
+from ..exposure.contracts import (
     Demand,
     InterfaceAttrs,
     Observation,

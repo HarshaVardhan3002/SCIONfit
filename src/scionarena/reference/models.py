@@ -19,7 +19,7 @@ import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 
-from ..interface import (
+from ..exposure.contracts import (
     SLA,
     Advisory,
     Capabilities,

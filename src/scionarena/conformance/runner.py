@@ -5,8 +5,8 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 
-from .env.world import World
-from .interface import PathModel
+from ..backends.analytical import World
+from ..exposure.contracts import PathModel
 from .probes.base import Probe, ProbeResult, Status
 from .probes.conformance import ALL_PROBES
 from .report import ReportCard

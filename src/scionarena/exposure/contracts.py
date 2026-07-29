@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "InterfaceAttrs", "PathRef", "TopologySnapshot",
@@ -142,7 +142,7 @@ class Dist:
 
     @property
     def is_distributional(self) -> bool:
-        return bool(self.quantiles) and len(self.quantiles) >= 3
+        return self.quantiles is not None and len(self.quantiles) >= 3
 
     @property
     def point(self) -> float:
@@ -295,7 +295,7 @@ class Capabilities:
     stateful: bool = True
 
     notes: str = ""
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------

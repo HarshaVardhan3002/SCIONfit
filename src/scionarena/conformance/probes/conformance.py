@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from statistics import mean
 
-from ..interface import SLA, Demand
+from ...exposure.contracts import SLA, Demand
 from .base import Probe, Status
 
 WARMUP_STEPS = 12

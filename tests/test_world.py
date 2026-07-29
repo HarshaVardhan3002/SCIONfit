@@ -1,7 +1,7 @@
 """The world must offer genuine alternatives or the probes measure nothing."""
 import pytest
 
-from scionfit.env.world import World
+from scionarena.backends.analytical import World
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7, 42, 1009, 2018, 31337])
