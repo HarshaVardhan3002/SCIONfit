@@ -14,8 +14,10 @@ from __future__ import annotations
 import time
 import tracemalloc
 
+import numpy as np
 import pytest
 
+from scionarena.core.segments import SegmentStore
 from scionarena.core.tiers import REALISTIC, STRESS
 from scionarena.core.topology import synthetic
 
@@ -45,6 +47,70 @@ def test_realistic_topology_fits_in_the_memory_budget():
         tracemalloc.stop()
     assert topo.nbytes < 200 * 1024**2, f"topology arrays are {topo.nbytes / 1024**2:.1f} MiB"
     assert peak < REALISTIC.memory_budget_bytes
+
+
+def realistic_store() -> tuple[float, SegmentStore]:
+    topo = synthetic(n_ases=REALISTIC.n_ases, n_links=REALISTIC.n_links, seed=0)
+    start = time.perf_counter()
+    store = SegmentStore.for_tier(topo, REALISTIC, seed=0)
+    return time.perf_counter() - start, store
+
+
+def scope_sample(n_ases: int, n: int = 200, seed: int = 4) -> list[tuple[int, int]]:
+    draw = np.random.default_rng(seed).integers(0, n_ases, size=(n, 2))
+    return [(int(a), int(b)) for a, b in draw if a != b]
+
+
+def test_realistic_beaconing_builds_within_budget():
+    elapsed, store = realistic_store()
+    assert store.n_segments > REALISTIC.n_ases, "fewer segments than ASes; beaconing did nothing"
+    assert elapsed < REALISTIC.build_budget_s, (
+        f"beaconing took {elapsed:.2f}s, budget {REALISTIC.build_budget_s}s"
+    )
+
+
+def test_realistic_path_query_fits_in_the_step_budget():
+    """A cold scope is the worst case: it walks the core graph. It still has to
+    fit inside one simulated step, because the network does not wait
+    (invariant 3) and a slow query would be charged to the world, not the model.
+    """
+    _, store = realistic_store()
+    scopes = scope_sample(REALISTIC.n_ases)
+    start = time.perf_counter()
+    for src, dst in scopes:
+        store.paths_for(src, dst)
+    worst = time.perf_counter() - start
+    mean = worst / len(scopes)
+    assert mean < REALISTIC.step_budget_s, (
+        f"cold path query averaged {mean * 1e3:.2f}ms, step budget {REALISTIC.step_budget_s * 1e3}ms"
+    )
+
+
+def test_realistic_paths_per_pair_lands_in_the_tier_band():
+    """12 ASes is a demo. So is 12 paths per pair. The tier band is the target
+    the whole substrate -- generator fan-out, beaconing breadth, composition --
+    has to add up to.
+
+    The mean is asserted, not the minimum: a single-homed stub genuinely has few
+    paths, and flattening that out would be less realistic, not more.
+    """
+    _, store = realistic_store()
+    floor, ceiling = REALISTIC.paths_per_pair
+    counts = [len(store.paths_for(src, dst)) for src, dst in scope_sample(REALISTIC.n_ases, n=120)]
+    mean = sum(counts) / len(counts)
+    assert floor <= mean <= ceiling, f"mean paths per pair is {mean:.0f}, band is {floor}-{ceiling}"
+    assert min(counts) > 0, "some scope resolved to nothing at all"
+
+
+def test_rebeaconing_the_whole_world_fits_in_a_step():
+    """Re-signing every segment at once is the worst refresh tick there is."""
+    _, store = realistic_store()
+    start = time.perf_counter()
+    store.rebeacon()
+    elapsed = time.perf_counter() - start
+    assert elapsed < 20 * REALISTIC.step_budget_s, (
+        f"a full re-beacon of {store.n_segments} segments took {elapsed * 1e3:.0f}ms"
+    )
 
 
 @pytest.mark.slow

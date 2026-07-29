@@ -482,29 +482,49 @@ def synthetic(
         dst_parts.append(np.asarray(dst, dtype=np.int64))
         rel_parts.append(np.full(len(src), rel, dtype=np.int8))
 
-    # 2a. Intra-ISD core mesh. Full mesh where the core is small, ring plus
-    # chords where it is not, because a full mesh of 800 core ASes is 320k links.
-    for isd in range(n_isds):
-        core = np.flatnonzero(as_is_core & (as_isd == isd))
+    # 2a. Intra-ISD core mesh. Full mesh where the core is small; where it is
+    # not, a star on the ISD's first core AS plus a ring, because a full mesh of
+    # 800 core ASes is 320k links and a bare ring has a diameter no bounded core
+    # segment search can cross.
+    cores_by_isd = [np.flatnonzero(as_is_core & (as_isd == i)) for i in range(n_isds)]
+    for core in cores_by_isd:
         if core.size < 2:
             continue
         if core.size <= 8:
             i, j = np.triu_indices(core.size, k=1)
             add(core[i], core[j], REL_CORE)
         else:
+            hub = np.full(core.size - 1, core[0])
+            add(hub, core[1:], REL_CORE)
             add(core, np.roll(core, 1), REL_CORE)
             chords = rng.integers(0, core.size, size=(2, core.size))
             add(core[chords[0]], core[chords[1]], REL_CORE)
 
-    # 2b. Inter-ISD core links: a ring over ISDs, each hop being a few core-core
-    # links, plus random extras. Without this an ISD is an island.
+    # 2b. Inter-ISD core links. A ring over ISDs plus a chord across the
+    # diameter and a random extra, so the number of ISD hops between any two
+    # ISDs stays small. A bare ring over 80 ISDs would put two ISDs 40 core hops
+    # apart, and every path between them would then fail to materialise -- which
+    # looks exactly like a policy filter and is a bug, not a scenario.
     if n_isds > 1:
-        cores_by_isd = [np.flatnonzero(as_is_core & (as_isd == i)) for i in range(n_isds)]
+        hubs = np.array([c[0] for c in cores_by_isd if c.size], dtype=np.int64)
         for isd in range(n_isds):
             here = cores_by_isd[isd]
-            there = cores_by_isd[(isd + 1) % n_isds]
-            k = min(3, here.size, there.size)
-            add(rng.choice(here, k, replace=False), rng.choice(there, k, replace=False), REL_CORE)
+            if here.size == 0:
+                continue
+            for other in {(isd + 1) % n_isds, (isd + n_isds // 2) % n_isds}:
+                there = cores_by_isd[other]
+                if other == isd or there.size == 0:
+                    continue
+                k = min(3, here.size, there.size)
+                add(
+                    rng.choice(here, k, replace=False),
+                    rng.choice(there, k, replace=False),
+                    REL_CORE,
+                )
+        # Hub to hub, so the ISD-level graph has a short diameter regardless of
+        # which core AS a segment happens to arrive at.
+        if hubs.size > 2:
+            add(hubs, np.roll(hubs, hubs.size // 2), REL_CORE)
 
     # 3. Customer-provider attachment, level by level.
     for lvl in range(1, N_LEVELS + 1):
@@ -524,11 +544,28 @@ def synthetic(
                 continue
             first = pool[rng.integers(0, pool.size, size=kids.size)]
             add(first, kids, REL_PARENT_CHILD)
-            # Roughly a third of ASes are multi-homed.
-            multi = kids[rng.random(kids.size) < 0.33]
-            if multi.size:
-                second = pool[rng.integers(0, pool.size, size=multi.size)]
-                add(second, multi, REL_PARENT_CHILD)
+            # Multi-homing. This is the knob that sets how many distinct
+            # up-segments an AS has, and therefore how many end-to-end paths a
+            # (src, dst) scope resolves to. Single-homing everywhere yields a
+            # handful of paths per pair; the realistic tier wants 100-300.
+            # ASSUMPTION(Q5): the degree distribution is plausible rather than
+            # fitted to CAIDA. from_caida() will replace it with measurement.
+            for probability in (0.8, 0.55, 0.3):
+                multi = kids[rng.random(kids.size) < probability]
+                if multi.size:
+                    add(pool[rng.integers(0, pool.size, size=multi.size)], multi, REL_PARENT_CHILD)
+            # Some ASes buy transit straight from the core, skipping a level.
+            # Real stubs do this constantly and it shortens up-segments.
+            if lvl > 1:
+                direct = kids[rng.random(kids.size) < 0.4]
+                if direct.size:
+                    core_pool = np.flatnonzero((as_isd == isd) & as_is_core)
+                    if core_pool.size:
+                        add(
+                            core_pool[rng.integers(0, core_pool.size, size=direct.size)],
+                            direct,
+                            REL_PARENT_CHILD,
+                        )
 
     src = np.concatenate(src_parts) if src_parts else np.zeros(0, dtype=np.int64)
     dst = np.concatenate(dst_parts) if dst_parts else np.zeros(0, dtype=np.int64)
