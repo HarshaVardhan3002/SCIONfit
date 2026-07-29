@@ -20,7 +20,8 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: System :: Networking",
 ]
-dependencies = []
+# core/ may depend on numpy and nothing else. A new dependency there needs an ADR.
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov", "ruff", "mypy>=1.8", "import-linter>=2.0", "pre-commit"]
@@ -34,6 +35,9 @@ packages = ["src/scionarena"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "slow: runs at the stress tier; not gated on time, only on not falling over",
+]
 
 [tool.ruff]
 line-length = 100
