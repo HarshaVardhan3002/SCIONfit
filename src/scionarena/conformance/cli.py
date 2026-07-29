@@ -32,19 +32,26 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("check", help="run the conformance suite on one model")
-    c.add_argument("model", help="'ema' | 'minrtt' | 'proportional' | 'reference' "
-                                 "| 'my.module:MyModel'")
+    c.add_argument(
+        "model", help="'ema' | 'minrtt' | 'proportional' | 'reference' | 'my.module:MyModel'"
+    )
     c.add_argument("--seed", type=int, default=0)
-    c.add_argument("--repeats", type=int, default=3,
-                   help="run each probe against N seeds and keep the worst outcome")
+    c.add_argument(
+        "--repeats",
+        type=int,
+        default=3,
+        help="run each probe against N seeds and keep the worst outcome",
+    )
     c.add_argument("--paths", type=int, default=6)
-    c.add_argument("--drift", type=float, default=0.0,
-                   help="exogenous condition drift, 0 = static world")
+    c.add_argument(
+        "--drift", type=float, default=0.0, help="exogenous condition drift, 0 = static world"
+    )
     c.add_argument("--format", choices=["terminal", "json", "markdown"], default="terminal")
     c.add_argument("--out", default=None, help="write to a file instead of stdout")
     c.add_argument("--no-colour", action="store_true")
-    c.add_argument("--strict", action="store_true",
-                   help="exit non-zero unless the verdict is CONFORMANT")
+    c.add_argument(
+        "--strict", action="store_true", help="exit non-zero unless the verdict is CONFORMANT"
+    )
 
     m = sub.add_parser("compare", help="run every reference model and print a matrix")
     m.add_argument("--seed", type=int, default=0)
@@ -61,16 +68,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if a.cmd == "compare":
-        cards = {k: check(v(), seed=a.seed, repeats=a.repeats)
-                 for k, v in REFERENCE_MODELS.items()}
+        cards = {k: check(v(), seed=a.seed, repeats=a.repeats) for k, v in REFERENCE_MODELS.items()}
         print(comparison_table(cards))
         return 0
 
-    card = check(_load(a.model), seed=a.seed, repeats=a.repeats,
-                 n_paths=a.paths, drift=a.drift)
-    text = {"terminal": lambda: card.to_terminal(colour=not a.no_colour),
-            "json": card.to_json,
-            "markdown": card.to_markdown}[a.format]()
+    card = check(_load(a.model), seed=a.seed, repeats=a.repeats, n_paths=a.paths, drift=a.drift)
+    text = {
+        "terminal": lambda: card.to_terminal(colour=not a.no_colour),
+        "json": card.to_json,
+        "markdown": card.to_markdown,
+    }[a.format]()
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text + "\n")

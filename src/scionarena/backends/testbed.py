@@ -22,6 +22,7 @@ from dataclasses import dataclass
 @dataclass
 class LinkShape:
     """One link's shaping parameters, mirroring tc netem/tbf."""
+
     latency_ms: float | None = None
     jitter_ms: float | None = None
     loss: float | None = None
@@ -42,10 +43,13 @@ class LinkdClient:
     def _call(self, method: str, path: str, payload: dict | None = None) -> dict:
         import json as _json
         import urllib.request
+
         url = f"{self.base_url}{path}"
         data = None if payload is None else _json.dumps(payload).encode()
         req = urllib.request.Request(
-            url, data=data, method=method,
+            url,
+            data=data,
+            method=method,
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as r:

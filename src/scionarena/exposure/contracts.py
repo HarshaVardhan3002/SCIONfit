@@ -26,9 +26,17 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "InterfaceAttrs", "PathRef", "TopologySnapshot",
-    "Observation", "Demand", "Dist", "Prediction", "Advisory",
-    "Capabilities", "PathModel", "SLA",
+    "InterfaceAttrs",
+    "PathRef",
+    "TopologySnapshot",
+    "Observation",
+    "Demand",
+    "Dist",
+    "Prediction",
+    "Advisory",
+    "Capabilities",
+    "PathModel",
+    "SLA",
 ]
 
 LinkType = str  # "core" | "parent_child" | "peering"
@@ -38,6 +46,7 @@ LinkType = str  # "core" | "parent_child" | "peering"
 # topology
 # --------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class InterfaceAttrs:
     """What a beacon tells you about one SCION interface.
@@ -46,6 +55,7 @@ class InterfaceAttrs:
     That is deliberate: a model needing more than this cannot satisfy R4
     (generalise to interfaces not seen during training).
     """
+
     iface_id: str
     as_id: str
     isd: int
@@ -58,11 +68,12 @@ class InterfaceAttrs:
 @dataclass(frozen=True)
 class PathRef:
     """An end-to-end path: an ordered sequence of interfaces."""
+
     path_id: str
     src: str
     dst: str
     interfaces: tuple[str, ...]
-    expiry_s: float | None = None          # seconds from snapshot time
+    expiry_s: float | None = None  # seconds from snapshot time
     mtu: int | None = None
 
     @property
@@ -77,6 +88,7 @@ class TopologySnapshot:
     Path sets churn and interfaces appear and disappear.  A model is handed a
     fresh snapshot on every call and must cope with the difference.
     """
+
     t: float
     interfaces: Mapping[str, InterfaceAttrs]
     paths: tuple[PathRef, ...]
@@ -92,6 +104,7 @@ class TopologySnapshot:
 # observations
 # --------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Observation:
     """One measurement of one path at one time.
@@ -99,12 +112,13 @@ class Observation:
     Any metric may be ``None``, meaning *not measured*.  That is not the same
     as measured-and-zero; probe R3 exists to check a model tells them apart.
     """
+
     t: float
     path_id: str
     latency_ms: float | None = None
     throughput_mbps: float | None = None
     loss: float | None = None
-    source: str = "unknown"     # "bbr" | "scmp" | "bwtest" | "beacon" | "idint"
+    source: str = "unknown"  # "bbr" | "scmp" | "bwtest" | "beacon" | "idint"
 
 
 @dataclass(frozen=True)
@@ -115,6 +129,7 @@ class Demand:
     should sum to 1 over the paths of one (src, dst) scope; the harness
     normalises and never assumes the model does.
     """
+
     per_path: Mapping[str, float]
     n_hosts: int = 1
 
@@ -130,6 +145,7 @@ class Demand:
 # predictions
 # --------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Dist:
     """A predicted quantity.
@@ -137,6 +153,7 @@ class Dist:
     A point estimate is expressible (``mean`` only) so baselines can be
     written; ``is_distributional`` is then False and probe R5 records it.
     """
+
     mean: float | None = None
     quantiles: Mapping[float, float] | None = None
 
@@ -176,10 +193,11 @@ class Dist:
 @dataclass(frozen=True)
 class Prediction:
     """What a model says about one path over one horizon."""
+
     latency_ms: Dist
     throughput_mbps: Dist
     loss: Dist
-    confidence: float | None = None       # [0,1]; None = not reported
+    confidence: float | None = None  # [0,1]; None = not reported
 
     def cost(self) -> float:
         """Scalar badness for the monotonicity and demand-sensitivity probes.
@@ -188,6 +206,7 @@ class Prediction:
         controlled change, never across models.
         """
         import math
+
         lat = self.latency_ms.point
         bw = self.throughput_mbps.point
         ls = self.loss.point
@@ -205,6 +224,7 @@ class Advisory:
     A model that ranks rather than distributes returns a one-hot, which is
     legal; probe R8 records exactly that.
     """
+
     weights: Mapping[str, float]
     temperature: float | None = None
     solver_converged: bool | None = None
@@ -227,12 +247,14 @@ class Advisory:
     @property
     def entropy(self) -> float:
         from math import log
+
         return -sum(v * log(v) for v in self.normalised().values() if v > 0)
 
     @property
     def normalised_entropy(self) -> float:
         """0 = one-hot (a ranking), 1 = uniform (round robin)."""
         from math import log
+
         n = len(self.weights)
         if n <= 1:
             return 0.0
@@ -243,6 +265,7 @@ class Advisory:
 # SLA
 # --------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SLA:
     """What the application wants.
@@ -250,6 +273,7 @@ class SLA:
     Presets mirror the ScionPathML QoE profiles so their Task 4 can be
     replayed through this interface without redefining anything.
     """
+
     name: str = "bulk"
     max_rtt_ms: float | None = None
     max_loss: float | None = None
@@ -259,17 +283,18 @@ class SLA:
     def presets() -> dict[str, SLA]:
         return {
             "video_conference": SLA("video_conference", 150, 0.02, 1.0),
-            "online_gaming":    SLA("online_gaming", 50, 0.01, 0.5),
-            "file_transfer":    SLA("file_transfer", 500, 0.05, 10.0),
-            "browsing":         SLA("browsing", 300, 0.03, 0.1),
-            "streaming":        SLA("streaming", 200, 0.01, 5.0),
-            "bulk":             SLA("bulk"),
+            "online_gaming": SLA("online_gaming", 50, 0.01, 0.5),
+            "file_transfer": SLA("file_transfer", 500, 0.05, 10.0),
+            "browsing": SLA("browsing", 300, 0.03, 0.1),
+            "streaming": SLA("streaming", 200, 0.01, 5.0),
+            "bulk": SLA("bulk"),
         }
 
 
 # --------------------------------------------------------------------------
 # capabilities
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class Capabilities:
@@ -279,18 +304,19 @@ class Capabilities:
     capability you do not have is the one thing producing a hard FAIL rather
     than a note: an honest limitation is fine, a false claim is not.
     """
+
     name: str
     version: str = "0.0.0"
     authors: str = ""
 
-    distributional: bool = False              # R5
-    demand_conditioned: bool = False          # R6
-    monotone_in_demand: bool = False          # R7
-    emits_assignment: bool = False            # R8
-    self_consistent: bool = False             # R9
-    staleness_aware: bool = False             # R10
-    handles_unseen_interfaces: bool = False   # R4
-    composes_unseen_paths: bool = False       # R2
+    distributional: bool = False  # R5
+    demand_conditioned: bool = False  # R6
+    monotone_in_demand: bool = False  # R7
+    emits_assignment: bool = False  # R8
+    self_consistent: bool = False  # R9
+    staleness_aware: bool = False  # R10
+    handles_unseen_interfaces: bool = False  # R4
+    composes_unseen_paths: bool = False  # R2
     reports_confidence: bool = False
     stateful: bool = True
 
@@ -301,6 +327,7 @@ class Capabilities:
 # --------------------------------------------------------------------------
 # the model protocol
 # --------------------------------------------------------------------------
+
 
 @runtime_checkable
 class PathModel(Protocol):

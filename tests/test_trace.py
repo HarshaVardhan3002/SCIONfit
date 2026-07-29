@@ -30,8 +30,7 @@ def conformance_trace_hash(seed: int = 0, repeats: int = 3) -> str:
         card = check(factory(), seed=seed, repeats=repeats)
         h.update({"model": name, "verdict": card.verdict})
         h.extend(
-            {"probe": r.probe_id, "status": r.status.name, "score": r.score}
-            for r in card.results
+            {"probe": r.probe_id, "status": r.status.name, "score": r.score} for r in card.results
         )
     return h.short()
 
@@ -39,6 +38,7 @@ def conformance_trace_hash(seed: int = 0, repeats: int = 3) -> str:
 # --------------------------------------------------------------------------
 # canonical form
 # --------------------------------------------------------------------------
+
 
 def test_mapping_key_order_does_not_change_the_hash():
     """Dict iteration order is an implementation detail, not a trace event."""
@@ -54,8 +54,9 @@ def test_event_order_does_change_the_hash():
 
 def test_adjacent_fields_cannot_merge():
     """Without a separator, ("ab", "c") and ("a", "bc") would collide."""
-    assert TraceHash().extend(["ab", "c"]).hexdigest() != \
-           TraceHash().extend(["a", "bc"]).hexdigest()
+    assert (
+        TraceHash().extend(["ab", "c"]).hexdigest() != TraceHash().extend(["a", "bc"]).hexdigest()
+    )
 
 
 def test_signed_zero_folds():
@@ -70,6 +71,7 @@ def test_every_nan_is_the_same_nan():
 
 def test_dataclass_hashes_by_field_not_by_identity():
     from scionarena.exposure.contracts import PathRef
+
     a = PathRef(path_id="p", src="1-a", dst="1-b", interfaces=("i1", "i2"))
     b = PathRef(path_id="p", src="1-a", dst="1-b", interfaces=("i1", "i2"))
     assert canonical(a) == canonical(b)
@@ -83,8 +85,7 @@ def test_unrenderable_object_raises_rather_than_hashing_its_address():
 
 
 def test_label_separates_traces():
-    assert TraceHash(label="a").update(1).hexdigest() != \
-           TraceHash(label="b").update(1).hexdigest()
+    assert TraceHash(label="a").update(1).hexdigest() != TraceHash(label="b").update(1).hexdigest()
 
 
 def test_count_tracks_events():
@@ -95,6 +96,7 @@ def test_count_tracks_events():
 # --------------------------------------------------------------------------
 # the tripwire itself
 # --------------------------------------------------------------------------
+
 
 def test_same_seed_gives_the_same_hash_twice():
     assert conformance_trace_hash() == conformance_trace_hash()
@@ -127,7 +129,10 @@ def test_hash_is_stable_across_processes():
         env = {**os.environ, "PYTHONHASHSEED": hash_seed}
         out = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
         )
         digests.append(out.stdout.strip())
 

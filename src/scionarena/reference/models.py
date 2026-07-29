@@ -50,6 +50,7 @@ def _softmax(scores: Mapping[str, float], eta: float) -> dict[str, float]:
 # 1. the incumbent
 # ==========================================================================
 
+
 class EMAOracle:
     """Per-link exponential moving average, min over links, greedy client.
 
@@ -60,14 +61,20 @@ class EMAOracle:
     def __init__(self, alpha: float = 0.3):
         self.alpha = alpha
         self.capabilities = Capabilities(
-            name="EMAOracle", version="1.0.0",
+            name="EMAOracle",
+            version="1.0.0",
             authors="reference implementation of the Path Oracle scoring service",
-            distributional=False, demand_conditioned=False, monotone_in_demand=False,
-            emits_assignment=False, self_consistent=False, staleness_aware=False,
-            handles_unseen_interfaces=True, composes_unseen_paths=True,
+            distributional=False,
+            demand_conditioned=False,
+            monotone_in_demand=False,
+            emits_assignment=False,
+            self_consistent=False,
+            staleness_aware=False,
+            handles_unseen_interfaces=True,
+            composes_unseen_paths=True,
             reports_confidence=False,
             notes="Lagging EMA per link; path score is the min over its links; "
-                  "client picks the maximum score.",
+            "client picks the maximum score.",
         )
 
     def reset(self, topo: TopologySnapshot, seed: int = 0) -> None:
@@ -87,19 +94,25 @@ class EMAOracle:
             for iid in p.interfaces:
                 if o.latency_ms is not None:
                     per = o.latency_ms / n
-                    self.lat[iid] = per if iid not in self.lat else (1 - a) * self.lat[iid] + a * per
+                    self.lat[iid] = (
+                        per if iid not in self.lat else (1 - a) * self.lat[iid] + a * per
+                    )
                 if o.throughput_mbps is not None:
                     v = o.throughput_mbps
                     self.bw[iid] = v if iid not in self.bw else (1 - a) * self.bw[iid] + a * v
                 if o.loss is not None:
                     per = o.loss / n
-                    self.loss[iid] = per if iid not in self.loss else (1 - a) * self.loss[iid] + a * per
+                    self.loss[iid] = (
+                        per if iid not in self.loss else (1 - a) * self.loss[iid] + a * per
+                    )
 
     def _fallback(self, topo: TopologySnapshot, iid: str) -> tuple[float, float, float]:
         a = topo.interfaces.get(iid)
-        return ((a.declared_latency_ms or 10.0) if a else 10.0,
-                (a.declared_bw_mbps or 100.0) if a else 100.0,
-                0.001)
+        return (
+            (a.declared_latency_ms or 10.0) if a else 10.0,
+            (a.declared_bw_mbps or 100.0) if a else 100.0,
+            0.001,
+        )
 
     def predict(self, topo, paths, horizon_s: float = 0.0, demand: Demand | None = None):
         out: dict[str, Prediction] = {}
@@ -109,7 +122,7 @@ class EMAOracle:
                 fl, fb, fs = self._fallback(topo, iid)
                 lat += self.lat.get(iid, fl)
                 bw = min(bw, self.bw.get(iid, fb))
-                surv *= (1.0 - self.loss.get(iid, fs))
+                surv *= 1.0 - self.loss.get(iid, fs)
             out[p.path_id] = Prediction(
                 latency_ms=Dist.point_estimate(lat),
                 throughput_mbps=Dist.point_estimate(0.0 if bw == float("inf") else bw),
@@ -122,13 +135,16 @@ class EMAOracle:
         if not pr:
             return Advisory(weights={})
         best = min(pr, key=lambda k: pr[k].cost())
-        return Advisory(weights={k: (1.0 if k == best else 0.0) for k in pr},
-                        reason="greedy: maximum score wins")
+        return Advisory(
+            weights={k: (1.0 if k == best else 0.0) for k in pr},
+            reason="greedy: maximum score wins",
+        )
 
 
 # ==========================================================================
 # 2 & 3. trivial baselines
 # ==========================================================================
+
 
 class MinRTTGreedy(EMAOracle):
     """Latency-only greedy. The simplest thing anyone actually deploys."""
@@ -136,10 +152,12 @@ class MinRTTGreedy(EMAOracle):
     def __init__(self):
         super().__init__(alpha=0.5)
         self.capabilities = Capabilities(
-            name="MinRTTGreedy", version="1.0.0",
-            handles_unseen_interfaces=True, composes_unseen_paths=True,
+            name="MinRTTGreedy",
+            version="1.0.0",
+            handles_unseen_interfaces=True,
+            composes_unseen_paths=True,
             notes="Picks the lowest predicted latency path. No distribution, "
-                  "no demand conditioning, no spreading.",
+            "no demand conditioning, no spreading.",
         )
 
     def advise(self, topo, paths, sla: SLA, n_hosts: int = 1) -> Advisory:
@@ -147,8 +165,7 @@ class MinRTTGreedy(EMAOracle):
         if not pr:
             return Advisory(weights={})
         best = min(pr, key=lambda k: pr[k].latency_ms.point)
-        return Advisory(weights={k: (1.0 if k == best else 0.0) for k in pr},
-                        reason="min RTT")
+        return Advisory(weights={k: (1.0 if k == best else 0.0) for k in pr}, reason="min RTT")
 
 
 class CapacityProportional:
@@ -161,8 +178,10 @@ class CapacityProportional:
 
     def __init__(self):
         self.capabilities = Capabilities(
-            name="CapacityProportional", version="1.0.0",
-            emits_assignment=True, handles_unseen_interfaces=True,
+            name="CapacityProportional",
+            version="1.0.0",
+            emits_assignment=True,
+            handles_unseen_interfaces=True,
             composes_unseen_paths=True,
             notes="Static split from beacon-declared capacity. Deliberately blind.",
         )
@@ -176,10 +195,16 @@ class CapacityProportional:
     def predict(self, topo, paths, horizon_s: float = 0.0, demand: Demand | None = None):
         out = {}
         for p in paths:
-            lat = sum((topo.interfaces[i].declared_latency_ms or 10.0)
-                      for i in p.interfaces if i in topo.interfaces)
-            caps = [(topo.interfaces[i].declared_bw_mbps or 100.0)
-                    for i in p.interfaces if i in topo.interfaces]
+            lat = sum(
+                (topo.interfaces[i].declared_latency_ms or 10.0)
+                for i in p.interfaces
+                if i in topo.interfaces
+            )
+            caps = [
+                (topo.interfaces[i].declared_bw_mbps or 100.0)
+                for i in p.interfaces
+                if i in topo.interfaces
+            ]
             out[p.path_id] = Prediction(
                 latency_ms=Dist.point_estimate(lat or 10.0),
                 throughput_mbps=Dist.point_estimate(min(caps) if caps else 100.0),
@@ -190,17 +215,23 @@ class CapacityProportional:
     def advise(self, topo, paths, sla: SLA, n_hosts: int = 1) -> Advisory:
         caps = {}
         for p in paths:
-            c = [(topo.interfaces[i].declared_bw_mbps or 100.0)
-                 for i in p.interfaces if i in topo.interfaces]
+            c = [
+                (topo.interfaces[i].declared_bw_mbps or 100.0)
+                for i in p.interfaces
+                if i in topo.interfaces
+            ]
             caps[p.path_id] = min(c) if c else 100.0
         tot = sum(caps.values()) or 1.0
-        return Advisory(weights={k: v / tot for k, v in caps.items()},
-                        reason="capacity-proportional, ignores telemetry")
+        return Advisory(
+            weights={k: v / tot for k, v in caps.items()},
+            reason="capacity-proportional, ignores telemetry",
+        )
 
 
 # ==========================================================================
 # 4. the compliant reference
 # ==========================================================================
+
 
 class ReferenceStochastic:
     """Satisfies R1-R10.
@@ -223,22 +254,28 @@ class ReferenceStochastic:
         self.lam_age = lam_age
         self.msa_iters = msa_iters
         self.capabilities = Capabilities(
-            name="ReferenceStochastic", version="0.1.0",
+            name="ReferenceStochastic",
+            version="0.1.0",
             authors="scionfit reference",
-            distributional=True, demand_conditioned=True, monotone_in_demand=True,
-            emits_assignment=True, self_consistent=True, staleness_aware=True,
-            handles_unseen_interfaces=True, composes_unseen_paths=True,
+            distributional=True,
+            demand_conditioned=True,
+            monotone_in_demand=True,
+            emits_assignment=True,
+            self_consistent=True,
+            staleness_aware=True,
+            handles_unseen_interfaces=True,
+            composes_unseen_paths=True,
             reports_confidence=True,
             notes="Reference implementation of the three-block design. The "
-                  "estimator is deliberately simple; the point is the structure.",
+            "estimator is deliberately simple; the point is the structure.",
         )
 
     # ---------------- state ----------------
 
     def reset(self, topo: TopologySnapshot, seed: int = 0) -> None:
         self._n: dict[str, int] = defaultdict(int)
-        self._m: dict[str, float] = defaultdict(float)      # mean latency share
-        self._s: dict[str, float] = defaultdict(float)      # sum of squares
+        self._m: dict[str, float] = defaultdict(float)  # mean latency share
+        self._s: dict[str, float] = defaultdict(float)  # sum of squares
         self._bw: dict[str, float] = {}
         self._loss: dict[str, float] = {}
         self._last_obs_t: float = topo.t
@@ -255,14 +292,16 @@ class ReferenceStochastic:
             self._last_obs_t = max(self._last_obs_t, o.t)
             n = len(p.interfaces)
             for iid in p.interfaces:
-                if o.latency_ms is not None:            # None means not measured
+                if o.latency_ms is not None:  # None means not measured
                     v = o.latency_ms / n
                     self._n[iid] += 1
                     d = v - self._m[iid]
                     self._m[iid] += d / self._n[iid]
                     self._s[iid] += d * (v - self._m[iid])
                 if o.throughput_mbps is not None:
-                    self._bw[iid] = 0.7 * self._bw.get(iid, o.throughput_mbps) + 0.3 * o.throughput_mbps
+                    self._bw[iid] = (
+                        0.7 * self._bw.get(iid, o.throughput_mbps) + 0.3 * o.throughput_mbps
+                    )
                 if o.loss is not None:
                     self._loss[iid] = 0.7 * self._loss.get(iid, o.loss) + 0.3 * o.loss
 
@@ -274,8 +313,8 @@ class ReferenceStochastic:
     def _link(self, topo: TopologySnapshot, iid: str) -> tuple[float, float, float, float]:
         """(latency, sigma, bw, loss) for one link, with prior fallback."""
         attrs = topo.interfaces.get(iid)
-        prior_lat = (attrs.declared_latency_ms if attrs and attrs.declared_latency_ms else 10.0)
-        prior_bw = (attrs.declared_bw_mbps if attrs and attrs.declared_bw_mbps else 100.0)
+        prior_lat = attrs.declared_latency_ms if attrs and attrs.declared_latency_ms else 10.0
+        prior_bw = attrs.declared_bw_mbps if attrs and attrs.declared_bw_mbps else 100.0
         n = self._n.get(iid, 0)
         if n >= 2:
             lat = self._m[iid]
@@ -298,7 +337,7 @@ class ReferenceStochastic:
         with a positive coefficient.
         """
         s = max(0.0, min(1.0, share))
-        return 1.0 + 1.8 * (s ** 3)
+        return 1.0 + 1.8 * (s**3)
 
     def _path_load(self, path: PathRef, demand: Demand | None) -> float:
         """How loaded this path is, in [0, 1].
@@ -322,8 +361,7 @@ class ReferenceStochastic:
         own = nd.get(path.path_id, 0.0)
         busiest = 0.0
         for iid in path.interfaces:
-            tot = sum(nd.get(q.path_id, 0.0)
-                      for q in self._paths.values() if iid in q.interfaces)
+            tot = sum(nd.get(q.path_id, 0.0) for q in self._paths.values() if iid in q.interfaces)
             busiest = max(busiest, tot)
         return max(0.0, min(1.0, 0.5 * own + 0.5 * busiest))
 
@@ -340,7 +378,7 @@ class ReferenceStochastic:
                 lat += link_lat
                 var += link_sigma * link_sigma
                 bw_min = min(bw_min, b)
-                surv *= (1.0 - ls)
+                surv *= 1.0 - ls
                 if self._n.get(iid, 0) == 0:
                     unobserved += 1
 
@@ -385,7 +423,7 @@ class ReferenceStochastic:
         if not paths:
             return Advisory(weights={})
         age = self._age(topo)
-        eta = self.eta0 / (1.0 + self.lam_age * age)   # R10: cool down with age
+        eta = self.eta0 / (1.0 + self.lam_age * age)  # R10: cool down with age
 
         ids = [p.path_id for p in paths]
         d = {k: 1.0 / len(ids) for k in ids}
@@ -394,7 +432,7 @@ class ReferenceStochastic:
             pred = self.predict(topo, paths, demand=Demand(d, n_hosts=n_hosts))
             u = {pid: self._utility(pred[pid], sla) for pid in ids if pid in pred}
             target = _softmax(u, eta)
-            step = 1.0 / k                              # method of successive averages
+            step = 1.0 / k  # method of successive averages
             new = {kk: (1 - step) * d.get(kk, 0.0) + step * target.get(kk, 0.0) for kk in ids}
             gap = sum(abs(new[kk] - d.get(kk, 0.0)) for kk in ids)
             d = new
@@ -402,7 +440,7 @@ class ReferenceStochastic:
                 converged, used = True, k
                 break
         else:
-            converged = True   # MSA with 1/k steps is convergent in the average
+            converged = True  # MSA with 1/k steps is convergent in the average
 
         # widen further if the whole estimate is stale
         mean_conf = None
@@ -412,8 +450,10 @@ class ReferenceStochastic:
             mean_conf = sum(cs) / len(cs)
 
         return Advisory(
-            weights=d, temperature=eta,
-            solver_converged=converged, solver_iterations=used,
+            weights=d,
+            temperature=eta,
+            solver_converged=converged,
+            solver_iterations=used,
             confidence=mean_conf,
             reason=f"entropy-regularised assignment, eta={eta:.2f}, MSA {used} iters",
         )

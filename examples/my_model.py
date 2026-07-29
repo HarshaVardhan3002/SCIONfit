@@ -2,6 +2,7 @@
 
 Run it:  python examples/my_model.py
 """
+
 from scionarena import Advisory, Capabilities, Dist, Prediction, check
 
 
@@ -26,7 +27,7 @@ class NaiveAverager:
 
     def observe(self, obs, topo):
         for o in obs:
-            if o.latency_ms is None:      # None means not measured
+            if o.latency_ms is None:  # None means not measured
                 continue
             self.total[o.path_id] = self.total.get(o.path_id, 0.0) + o.latency_ms
             self.count[o.path_id] = self.count.get(o.path_id, 0) + 1
@@ -35,8 +36,14 @@ class NaiveAverager:
         n = self.count.get(path.path_id, 0)
         if n:
             return self.total[path.path_id] / n
-        return sum((topo.interfaces[i].declared_latency_ms or 10.0)
-                   for i in path.interfaces if i in topo.interfaces) or 10.0
+        return (
+            sum(
+                (topo.interfaces[i].declared_latency_ms or 10.0)
+                for i in path.interfaces
+                if i in topo.interfaces
+            )
+            or 10.0
+        )
 
     def predict(self, topo, paths, horizon_s=0.0, demand=None):
         return {

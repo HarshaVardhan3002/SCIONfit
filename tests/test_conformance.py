@@ -1,4 +1,5 @@
 """The suite is only worth anything if it separates good models from bad ones."""
+
 import pytest
 
 from scionarena import check
@@ -45,7 +46,7 @@ def test_false_claim_is_detected():
     """Claiming a capability you lack is the one thing scored worse than
     lacking it."""
     m = EMAOracle()
-    m.capabilities.demand_conditioned = True     # a lie
+    m.capabilities.demand_conditioned = True  # a lie
     card = check(m, seed=0, repeats=1)
     assert card.verdict == "MISDECLARED"
     assert any(r.probe_id == "R6" for r in card.false_claims)
@@ -60,8 +61,8 @@ def test_reference_stable_across_seeds(seed):
 def test_capacity_proportional_is_blind_to_telemetry():
     card = check(CapacityProportional(), seed=0, repeats=2)
     by = {r.probe_id: r.status for r in card.results}
-    assert by["R1"] is Status.FAIL      # ignores link state entirely
-    assert by["R8"] is Status.PASS      # but does spread traffic
+    assert by["R1"] is Status.FAIL  # ignores link state entirely
+    assert by["R8"] is Status.PASS  # but does spread traffic
 
 
 def test_reports_render():

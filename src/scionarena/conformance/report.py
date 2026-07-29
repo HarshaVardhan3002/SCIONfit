@@ -10,14 +10,22 @@ from ..exposure.contracts import Capabilities
 from .probes.base import ProbeResult, Status
 
 GLYPH = {
-    Status.PASS: "PASS", Status.WEAK: "WEAK", Status.FAIL: "FAIL",
-    Status.DECLARED_ABSENT: "ABSENT", Status.FALSE_CLAIM: "FALSE CLAIM",
-    Status.NOT_APPLICABLE: "N/A", Status.ERROR: "ERROR",
+    Status.PASS: "PASS",
+    Status.WEAK: "WEAK",
+    Status.FAIL: "FAIL",
+    Status.DECLARED_ABSENT: "ABSENT",
+    Status.FALSE_CLAIM: "FALSE CLAIM",
+    Status.NOT_APPLICABLE: "N/A",
+    Status.ERROR: "ERROR",
 }
 ANSI = {
-    Status.PASS: "\033[32m", Status.WEAK: "\033[33m", Status.FAIL: "\033[31m",
-    Status.DECLARED_ABSENT: "\033[90m", Status.FALSE_CLAIM: "\033[35m",
-    Status.NOT_APPLICABLE: "\033[90m", Status.ERROR: "\033[31m",
+    Status.PASS: "\033[32m",
+    Status.WEAK: "\033[33m",
+    Status.FAIL: "\033[31m",
+    Status.DECLARED_ABSENT: "\033[90m",
+    Status.FALSE_CLAIM: "\033[35m",
+    Status.NOT_APPLICABLE: "\033[90m",
+    Status.ERROR: "\033[31m",
 }
 RESET = "\033[0m"
 
@@ -52,8 +60,11 @@ class ReportCard:
         """Whether this model can be put in the multi-agent tier without the
         result being a foregone conclusion."""
         need = {"R6", "R8", "R9"}
-        got = {r.probe_id for r in self.results
-               if r.probe_id in need and r.status in (Status.PASS, Status.WEAK)}
+        got = {
+            r.probe_id
+            for r in self.results
+            if r.probe_id in need and r.status in (Status.PASS, Status.WEAK)
+        }
         return got == need
 
     @property
@@ -78,8 +89,11 @@ class ReportCard:
 
     @property
     def score(self) -> float:
-        vals = [r.score for r in self.results
-                if r.score is not None and r.status is not Status.NOT_APPLICABLE]
+        vals = [
+            r.score
+            for r in self.results
+            if r.score is not None and r.status is not Status.NOT_APPLICABLE
+        ]
         return sum(vals) / len(vals) if vals else 0.0
 
     # ---------------- renderers ----------------
@@ -130,8 +144,9 @@ class ReportCard:
                 "version": self.capabilities.version,
                 "authors": self.capabilities.authors,
                 "notes": self.capabilities.notes,
-                "declared": {k: v for k, v in vars(self.capabilities).items()
-                             if isinstance(v, bool)},
+                "declared": {
+                    k: v for k, v in vars(self.capabilities).items() if isinstance(v, bool)
+                },
             },
             "results": [r.as_dict() for r in self.results],
             "summary": {
@@ -147,12 +162,17 @@ class ReportCard:
 
     def to_markdown(self) -> str:
         c = self.capabilities
-        L = [f"# scionfit report: {c.name} v{c.version}", "",
-             f"**Verdict: {self.verdict}**  ·  mean score {self.score:.2f}  ·  "
-             f"closed-loop ready: {'yes' if self.closed_loop_ready else 'no'}", "",
-             f"_{self.created}, world seed {self.world_seed}, scionfit {self.scionfit_version}_", "",
-             "| Probe | Requirement | Status | Score | Finding |",
-             "|---|---|---|---|---|"]
+        L = [
+            f"# scionfit report: {c.name} v{c.version}",
+            "",
+            f"**Verdict: {self.verdict}**  ·  mean score {self.score:.2f}  ·  "
+            f"closed-loop ready: {'yes' if self.closed_loop_ready else 'no'}",
+            "",
+            f"_{self.created}, world seed {self.world_seed}, scionfit {self.scionfit_version}_",
+            "",
+            "| Probe | Requirement | Status | Score | Finding |",
+            "|---|---|---|---|---|",
+        ]
         for r in self.results:
             f = r.finding.replace("|", "\\|")
             sc = f"{r.score:.2f}" if r.score is not None else "–"

@@ -19,13 +19,13 @@ from ..exposure.contracts import Observation
 
 #: our field <- their column. Verify against a real export before use.
 COLUMN_MAP = {
-    "t":               ("timestamp", "time", "measured_at"),
-    "path_id":         ("path_fingerprint", "path_id", "fingerprint"),
-    "latency_ms":      ("rtt_ms", "rtt", "latency_ms"),
+    "t": ("timestamp", "time", "measured_at"),
+    "path_id": ("path_fingerprint", "path_id", "fingerprint"),
+    "latency_ms": ("rtt_ms", "rtt", "latency_ms"),
     "throughput_mbps": ("bandwidth_mbps", "bw_mbps", "throughput"),
-    "loss":            ("loss", "loss_rate", "packet_loss"),
-    "src":             ("src_ia", "source_as", "src"),
-    "dst":             ("dst_ia", "dest_as", "dst"),
+    "loss": ("loss", "loss_rate", "packet_loss"),
+    "src": ("src_ia", "source_as", "src"),
+    "dst": ("dst_ia", "dest_as", "dst"),
 }
 
 
@@ -56,7 +56,8 @@ def read_observations(csv_path: str | Path) -> Iterator[Observation]:
             if t is None or pid is None:
                 continue
             yield Observation(
-                t=t, path_id=str(pid),
+                t=t,
+                path_id=str(pid),
                 latency_ms=_f(_pick(row, COLUMN_MAP["latency_ms"])),
                 throughput_mbps=_f(_pick(row, COLUMN_MAP["throughput_mbps"])),
                 loss=_f(_pick(row, COLUMN_MAP["loss"])),
@@ -67,4 +68,5 @@ def read_observations(csv_path: str | Path) -> Iterator[Observation]:
 def qoe_profiles():
     """Their Task 4 QoE profiles, already mirrored in ``SLA.presets()``."""
     from ..interface import SLA
+
     return {k: v for k, v in SLA.presets().items() if k != "bulk"}

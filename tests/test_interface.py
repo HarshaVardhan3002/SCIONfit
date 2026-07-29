@@ -32,7 +32,9 @@ def test_degenerate_weights_fall_back_to_uniform():
 
 
 def test_cost_tolerates_nan_and_zero_bandwidth():
-    p = Prediction(Dist.point_estimate(float("nan")),
-                   Dist.point_estimate(0.0),
-                   Dist.point_estimate(float("nan")))
-    assert p.cost() == p.cost()      # not NaN
+    p = Prediction(
+        Dist.point_estimate(float("nan")),
+        Dist.point_estimate(0.0),
+        Dist.point_estimate(float("nan")),
+    )
+    assert p.cost() == p.cost()  # not NaN

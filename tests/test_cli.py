@@ -17,5 +17,6 @@ def test_strict_fails_on_nonconformant():
 
 def test_json_format(capsys):
     import json
+
     assert main(["check", "reference", "--format", "json", "--repeats", "1"]) == 0
     json.loads(capsys.readouterr().out)

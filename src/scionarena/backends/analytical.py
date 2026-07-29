@@ -30,10 +30,11 @@ LINK_TYPES = ("core", "parent_child", "peering")
 @dataclass
 class LinkState:
     """Ground truth for one inter-AS link."""
+
     capacity_mbps: float
     base_latency_ms: float
     base_loss: float
-    background: float = 0.0     # exogenous load as a fraction of capacity
+    background: float = 0.0  # exogenous load as a fraction of capacity
 
 
 class World:
@@ -74,8 +75,13 @@ class World:
             cap = r.choice([100.0, 200.0, 400.0, 1000.0])
             lat = r.uniform(2.0, 25.0)
             self.interfaces[iid] = InterfaceAttrs(
-                iface_id=iid, as_id=as_id, isd=1, link_type=lt,
-                declared_bw_mbps=cap, declared_latency_ms=lat, mtu=1472,
+                iface_id=iid,
+                as_id=as_id,
+                isd=1,
+                link_type=lt,
+                declared_bw_mbps=cap,
+                declared_latency_ms=lat,
+                mtu=1472,
             )
             self.links[iid] = LinkState(
                 capacity_mbps=cap,
@@ -109,8 +115,7 @@ class World:
             else:
                 # reuse exactly one interface from an earlier path, if one is
                 # still under the cap, so paths are coupled but not identical
-                donor_pool = [i for q in self.paths for i in q.interfaces
-                              if use_count[i] < cap]
+                donor_pool = [i for q in self.paths for i in q.interfaces if use_count[i] < cap]
                 pool = list(avail)
                 if donor_pool:
                     shared = r.choice(donor_pool)
@@ -121,11 +126,16 @@ class World:
                 r.shuffle(chosen)
             for i in chosen:
                 use_count[i] += 1
-            self.paths.append(PathRef(
-                path_id=f"p{p}", src="1-ff00:0:110", dst="1-ff00:0:120",
-                interfaces=tuple(chosen),
-                expiry_s=r.uniform(300.0, 2400.0), mtu=1472,
-            ))
+            self.paths.append(
+                PathRef(
+                    path_id=f"p{p}",
+                    src="1-ff00:0:110",
+                    dst="1-ff00:0:120",
+                    interfaces=tuple(chosen),
+                    expiry_s=r.uniform(300.0, 2400.0),
+                    mtu=1472,
+                )
+            )
 
         self._use_count = use_count
 
@@ -133,8 +143,7 @@ class World:
         """Interfaces that lie on every path. Should be empty by construction;
         exposed so tests can assert that."""
         n = len(self.paths)
-        return [i for i in self.interfaces
-                if n and all(i in p.interfaces for p in self.paths)]
+        return [i for i in self.interfaces if n and all(i in p.interfaces for p in self.paths)]
 
     # ---------------- dynamics ----------------
 
@@ -158,7 +167,9 @@ class World:
         loss = min(0.5, ls.base_loss + 0.06 * max(0.0, util - 0.75) ** 2 * 40.0)
         return lat, avail, loss
 
-    def path_metrics(self, path: PathRef, demand: Demand | None = None) -> tuple[float, float, float]:
+    def path_metrics(
+        self, path: PathRef, demand: Demand | None = None
+    ) -> tuple[float, float, float]:
         """Compose link metrics along a path.
 
         latency = sum, bandwidth = min, loss = 1 - prod(1 - p).
@@ -173,11 +184,11 @@ class World:
                 for p in self.paths:
                     if iid in p.interfaces:
                         load += nd.get(p.path_id, 0.0)
-                load *= 0.9   # scale offered load into a fraction of capacity
+                load *= 0.9  # scale offered load into a fraction of capacity
             lat, bw, ls = self.link_metrics(iid, load)
             lat_tot += lat
             bw_min = min(bw_min, bw)
-            surv *= (1.0 - ls)
+            surv *= 1.0 - ls
         return lat_tot, (0.0 if bw_min == float("inf") else bw_min), 1.0 - surv
 
     # ---------------- harness-facing API ----------------
@@ -212,12 +223,16 @@ class World:
             def jitter(v: float) -> float:
                 return v * (1.0 + self.rng.gauss(0.0, noise))
 
-            out.append(Observation(
-                t=self.t, path_id=p.path_id,
-                latency_ms=jitter(lat), throughput_mbps=jitter(bw),
-                loss=max(0.0, jitter(ls)),
-                source=source,
-            ))
+            out.append(
+                Observation(
+                    t=self.t,
+                    path_id=p.path_id,
+                    latency_ms=jitter(lat),
+                    throughput_mbps=jitter(bw),
+                    loss=max(0.0, jitter(ls)),
+                    source=source,
+                )
+            )
         return out
 
     def step(self, dt: float = 1.0) -> None:
@@ -248,19 +263,29 @@ class World:
             iid = f"ifNEW{start + i:03d}"
             cap = r.choice([100.0, 400.0, 1000.0])
             self.interfaces[iid] = InterfaceAttrs(
-                iface_id=iid, as_id=f"1-ff00:0:{900 + i:x}", isd=1,
+                iface_id=iid,
+                as_id=f"1-ff00:0:{900 + i:x}",
+                isd=1,
                 link_type=LINK_TYPES[i % 3],
-                declared_bw_mbps=cap, declared_latency_ms=r.uniform(2.0, 25.0),
+                declared_bw_mbps=cap,
+                declared_latency_ms=r.uniform(2.0, 25.0),
                 mtu=1472,
             )
-            self.links[iid] = LinkState(cap, r.uniform(2.0, 25.0),
-                                        r.uniform(0.0, 0.004), r.uniform(0.05, 0.3))
+            self.links[iid] = LinkState(
+                cap, r.uniform(2.0, 25.0), r.uniform(0.0, 0.004), r.uniform(0.05, 0.3)
+            )
             new.append(iid)
         return new
 
     def add_path_using(self, ifaces: Sequence[str], path_id: str) -> PathRef:
-        p = PathRef(path_id=path_id, src="1-ff00:0:110", dst="1-ff00:0:120",
-                    interfaces=tuple(ifaces), expiry_s=1200.0, mtu=1472)
+        p = PathRef(
+            path_id=path_id,
+            src="1-ff00:0:110",
+            dst="1-ff00:0:120",
+            interfaces=tuple(ifaces),
+            expiry_s=1200.0,
+            mtu=1472,
+        )
         self.paths.append(p)
         return p
 

@@ -1,4 +1,5 @@
 """The world must offer genuine alternatives or the probes measure nothing."""
+
 import pytest
 
 from scionarena.backends.analytical import World

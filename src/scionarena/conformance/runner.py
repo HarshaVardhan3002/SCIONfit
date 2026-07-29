@@ -33,8 +33,15 @@ def check(
     outcome per probe, which is the honest summary for a stochastic model.
     """
     probes = list(probes if probes is not None else ALL_PROBES)
-    order = [Status.PASS, Status.NOT_APPLICABLE, Status.DECLARED_ABSENT,
-             Status.WEAK, Status.FAIL, Status.FALSE_CLAIM, Status.ERROR]
+    order = [
+        Status.PASS,
+        Status.NOT_APPLICABLE,
+        Status.DECLARED_ABSENT,
+        Status.WEAK,
+        Status.FAIL,
+        Status.FALSE_CLAIM,
+        Status.ERROR,
+    ]
     rank = {s: i for i, s in enumerate(order)}
 
     worst: dict[str, ProbeResult] = {}
@@ -59,9 +66,16 @@ def check_many(models: dict[str, PathModel], **kw) -> dict[str, ReportCard]:
 def comparison_table(cards: dict[str, ReportCard]) -> str:
     """A compact cross-model matrix. Used to show the probes discriminate."""
     from .probes.base import Status as S
-    glyph = {S.PASS: "PASS", S.WEAK: "weak", S.FAIL: "FAIL",
-             S.DECLARED_ABSENT: "  - ", S.FALSE_CLAIM: "LIED", S.NOT_APPLICABLE: " n/a",
-             S.ERROR: " ERR"}
+
+    glyph = {
+        S.PASS: "PASS",
+        S.WEAK: "weak",
+        S.FAIL: "FAIL",
+        S.DECLARED_ABSENT: "  - ",
+        S.FALSE_CLAIM: "LIED",
+        S.NOT_APPLICABLE: " n/a",
+        S.ERROR: " ERR",
+    }
     ids = [r.probe_id for r in next(iter(cards.values())).results]
     w = max(len(n) for n in cards) + 2
     lines = [" " * w + "".join(f"{i:>6}" for i in ids) + "   verdict"]

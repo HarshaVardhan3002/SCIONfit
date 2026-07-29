@@ -6,5 +6,10 @@ from .models import (
     ReferenceStochastic,
 )
 
-__all__ = ["EMAOracle", "MinRTTGreedy", "CapacityProportional",
-           "ReferenceStochastic", "REFERENCE_MODELS"]
+__all__ = [
+    "EMAOracle",
+    "MinRTTGreedy",
+    "CapacityProportional",
+    "ReferenceStochastic",
+    "REFERENCE_MODELS",
+]

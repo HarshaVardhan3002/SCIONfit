@@ -17,11 +17,11 @@ from typing import Any
 class Status(str, Enum):  # noqa: UP042  StrEnum would change str(Status.PASS)
     PASS = "PASS"
     FAIL = "FAIL"
-    WEAK = "WEAK"                      # satisfied, but marginally
+    WEAK = "WEAK"  # satisfied, but marginally
     DECLARED_ABSENT = "DECLARED_ABSENT"  # model honestly says it lacks this
-    FALSE_CLAIM = "FALSE_CLAIM"        # model claimed it, behaviour says no
+    FALSE_CLAIM = "FALSE_CLAIM"  # model claimed it, behaviour says no
     NOT_APPLICABLE = "NOT_APPLICABLE"
-    ERROR = "ERROR"                    # model raised
+    ERROR = "ERROR"  # model raised
 
     @property
     def is_blocking(self) -> bool:
@@ -37,7 +37,7 @@ class ProbeResult:
     status: Status
     finding: str
     evidence: dict[str, Any] = field(default_factory=dict)
-    score: float | None = None          # [0,1] where meaningful
+    score: float | None = None  # [0,1] where meaningful
     remedy: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -71,9 +71,14 @@ class Probe:
     def result(self, status: Status, finding: str, **evidence) -> ProbeResult:
         score = evidence.pop("score", None)
         return ProbeResult(
-            probe_id=self.probe_id, requirement=self.requirement,
-            title=self.title, status=status, finding=finding,
-            evidence=evidence, score=score, remedy=self.remedy,
+            probe_id=self.probe_id,
+            requirement=self.requirement,
+            title=self.title,
+            status=status,
+            finding=finding,
+            evidence=evidence,
+            score=score,
+            remedy=self.remedy,
         )
 
     def declared_absent(self, flag: str) -> ProbeResult:
@@ -104,8 +109,9 @@ class Probe:
           because a wrong declaration silently corrupts every downstream
           comparison that trusts it.
         """
-        claimed = (self.capability is not None
-                   and getattr(model.capabilities, self.capability, False))
+        claimed = self.capability is not None and getattr(
+            model.capabilities, self.capability, False
+        )
 
         try:
             res = self.run(model, world, rng)
@@ -122,8 +128,9 @@ class Probe:
         if claimed:
             if res.status is Status.FAIL:
                 res.status = Status.FALSE_CLAIM
-                res.finding = (f"Model declares {self.capability}=True but "
-                               f"behaviour says otherwise. ") + res.finding
+                res.finding = (
+                    f"Model declares {self.capability}=True but behaviour says otherwise. "
+                ) + res.finding
             return res
 
         if res.status in (Status.FAIL, Status.WEAK):
@@ -132,6 +139,8 @@ class Probe:
             out.score = 0.0
             return out
         if res.status is Status.PASS:
-            res.finding = (f"Satisfied although {self.capability} was not "
-                           f"declared. Consider updating the declaration. ") + res.finding
+            res.finding = (
+                f"Satisfied although {self.capability} was not "
+                f"declared. Consider updating the declaration. "
+            ) + res.finding
         return res

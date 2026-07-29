@@ -18,9 +18,13 @@ from pathlib import Path
 from ..exposure.contracts import InterfaceAttrs, PathRef, TopologySnapshot
 
 LINK_TYPE_MAP = {
-    "core": "core", "CORE": "core",
-    "parent": "parent_child", "child": "parent_child", "provider": "parent_child",
-    "peer": "peering", "peering": "peering",
+    "core": "core",
+    "CORE": "core",
+    "parent": "parent_child",
+    "child": "parent_child",
+    "provider": "parent_child",
+    "peer": "peering",
+    "peering": "peering",
 }
 
 
@@ -44,10 +48,14 @@ def load_topology(path: str | Path, t: float = 0.0) -> TopologySnapshot:
     paths: list[PathRef] = []
     for i, p in enumerate(raw.get("paths", [])):
         seq = p.get("interfaces") or p.get("hops") or []
-        paths.append(PathRef(
-            path_id=str(p.get("id", f"p{i}")),
-            src=str(p.get("src", "")), dst=str(p.get("dst", "")),
-            interfaces=tuple(str(h) for h in seq),
-            expiry_s=p.get("expiry_s"), mtu=p.get("mtu"),
-        ))
+        paths.append(
+            PathRef(
+                path_id=str(p.get("id", f"p{i}")),
+                src=str(p.get("src", "")),
+                dst=str(p.get("dst", "")),
+                interfaces=tuple(str(h) for h in seq),
+                expiry_s=p.get("expiry_s"),
+                mtu=p.get("mtu"),
+            )
+        )
     return TopologySnapshot(t=t, interfaces=ifaces, paths=tuple(paths))

@@ -8,6 +8,7 @@ as ``scionfit`` and it is re-exported here unchanged::
     from scionarena.reference import ReferenceStochastic
     print(check(ReferenceStochastic()).to_terminal())
 """
+
 from .conformance.probes.base import Probe, ProbeResult, Status
 from .conformance.report import ReportCard
 from .conformance.runner import check, check_many, comparison_table
@@ -27,9 +28,23 @@ from .exposure.contracts import (
 
 __version__ = "0.1.0"
 __all__ = [
-    "check", "check_many", "comparison_table", "ReportCard",
-    "Probe", "ProbeResult", "Status",
-    "PathModel", "Capabilities", "TopologySnapshot", "PathRef",
-    "InterfaceAttrs", "Observation", "Demand", "Dist", "Prediction",
-    "Advisory", "SLA", "__version__",
+    "check",
+    "check_many",
+    "comparison_table",
+    "ReportCard",
+    "Probe",
+    "ProbeResult",
+    "Status",
+    "PathModel",
+    "Capabilities",
+    "TopologySnapshot",
+    "PathRef",
+    "InterfaceAttrs",
+    "Observation",
+    "Demand",
+    "Dist",
+    "Prediction",
+    "Advisory",
+    "SLA",
+    "__version__",
 ]

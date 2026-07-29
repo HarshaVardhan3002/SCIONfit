@@ -12,6 +12,11 @@ from .report import ReportCard
 from .runner import check, check_many, comparison_table
 
 __all__ = [
-    "Probe", "ProbeResult", "Status", "ReportCard",
-    "check", "check_many", "comparison_table",
+    "Probe",
+    "ProbeResult",
+    "Status",
+    "ReportCard",
+    "check",
+    "check_many",
+    "comparison_table",
 ]

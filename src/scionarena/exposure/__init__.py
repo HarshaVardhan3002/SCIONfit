@@ -23,6 +23,15 @@ from .contracts import (
 )
 
 __all__ = [
-    "SLA", "Advisory", "Capabilities", "Demand", "Dist", "InterfaceAttrs",
-    "Observation", "PathModel", "PathRef", "Prediction", "TopologySnapshot",
+    "SLA",
+    "Advisory",
+    "Capabilities",
+    "Demand",
+    "Dist",
+    "InterfaceAttrs",
+    "Observation",
+    "PathModel",
+    "PathRef",
+    "Prediction",
+    "TopologySnapshot",
 ]
