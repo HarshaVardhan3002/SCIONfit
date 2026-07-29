@@ -25,22 +25,25 @@ That means a model can be accurate on recorded data and still be unusable, becau
 pip install -e ".[dev]"
 ```
 
-No required dependencies. Python 3.10+.
+No required dependencies. Python 3.11+.
 
 ## Use
 
+The package is `scionarena` and conformance is one front-end on it. The `scionfit`
+command is kept as an alias for that front-end.
+
 ```bash
-scionfit list                       # built-in reference models
-scionfit check reference            # the compliant reference implementation
-scionfit check ema                  # the Path Oracle style incumbent
-scionfit compare                    # every reference model, side by side
+scionarena conformance list                 # built-in reference models
+scionarena conformance check reference      # the compliant reference implementation
+scionarena conformance check ema            # the Path Oracle style incumbent
+scionarena conformance compare              # every reference model, side by side
 scionfit check my.module:MyModel --format markdown --out report.md
 ```
 
 In Python:
 
 ```python
-from scionfit import check
+from scionarena import check
 from my_project import MyOracle
 
 card = check(MyOracle(), seed=0, repeats=5)
@@ -54,7 +57,7 @@ print(card.closed_loop_ready)   # can this be meaningfully stability-tested?
 One class, four methods. A twenty-line moving average can satisfy it; that is a design constraint, not an accident.
 
 ```python
-from scionfit import Capabilities, Dist, Prediction, Advisory
+from scionarena import Capabilities, Dist, Prediction, Advisory
 
 class MyOracle:
     capabilities = Capabilities(
@@ -151,6 +154,20 @@ behaviour.
 
 Start with **`CLAUDE.md`**, then **`docs/HANDOFF.md`**, then the milestone you are working
 on in `docs/milestones/`.
+
+M0 has landed: the tree is in the target layout and the import direction
+(`core <- exposure <- {conformance, bench, gym, agent, deploy}`) is enforced by
+`lint-imports` in CI rather than by review.
+
+```
+src/scionarena/
+  core/          substrate       (trace hashing only until M1)
+  exposure/      contracts       the only thing a model touches
+  backends/      tiers 0-3
+  conformance/   probes, runner, report card
+  reference/     four models, deliberately simple
+  instrument/ bench/ gym/ agent/ deploy/     empty until M4-M9
+```
 
 Note that `docs/DESIGN.md` describes v0.1 as built. `docs/HANDOFF.md` supersedes it where
 they disagree — in particular the churn model, which was wrong in v0.1 and is corrected in

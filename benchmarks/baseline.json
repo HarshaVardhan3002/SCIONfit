@@ -1,0 +1,10 @@
+{
+  "_comment": "Performance baselines for core/. Empty until M1 produces a substrate worth timing. Any change to core/ runs the benchmark suite and a regression beyond 15% on the realistic tier fails CI.",
+  "schema": 1,
+  "tiers": {
+    "smoke": {},
+    "dev": {},
+    "realistic": {},
+    "stress": {}
+  }
+}

@@ -32,13 +32,18 @@ this at the suite level; please enforce it at the probe level yourself.
 
 ```bash
 pip install -e ".[dev]"
+pre-commit install                  # optional; runs the same gates locally
+
 pytest -q
-ruff check src tests
-python -m scionfit.cli compare      # the discrimination matrix
+ruff check src tests examples
+ruff format --check src tests examples
+mypy                                # --strict on core/ and exposure/
+lint-imports                        # core <- exposure <- front-ends
+python -m scionarena.conformance.cli compare    # the discrimination matrix
 ```
 
-CI runs all three, plus `compare`, so a change that makes the probes stop
-discriminating fails the build.
+CI runs all of the above, so a change that makes the probes stop discriminating,
+breaks the import direction, or makes a run non-reproducible fails the build.
 
 ## Adapters
 

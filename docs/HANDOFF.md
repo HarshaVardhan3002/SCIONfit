@@ -23,7 +23,7 @@ keeping are named below.
 
 - `interface.py` — the `PathModel` protocol and the `Capabilities` declaration. The
   three design rules behind it hold. It gets **extended** in M2 (tools, budgets) but the
-  existing methods keep their signatures.
+  existing methods keep their signatures. Now `exposure/contracts.py` (M0).
 - The `DECLARED_ABSENT` / `FALSE_CLAIM` asymmetry. Keep exactly.
 - The behavioural-probe discipline: change one thing, compare a model against itself,
   never against another model.
@@ -33,6 +33,7 @@ keeping are named below.
 ### What gets replaced
 
 - `env/world.py` entirely. It is a 6-path analytical toy with the wrong churn model.
+  Moved unchanged to `backends/analytical.py` in M0; rewritten in M1.
 - Probe `R4`. Rewritten against the corrected domain, and it becomes one of the more
   valuable probes rather than one of the weaker ones.
 - The single-tier assumption throughout.

@@ -6,14 +6,33 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12"]
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests
+
+      - name: lint
+        run: ruff check src tests examples
+      - name: format
+        run: ruff format --check src tests examples
+      - name: types
+        run: mypy
+      - name: import direction (core <- exposure <- front-ends)
+        run: lint-imports
       - run: pytest -q
+
       - name: reference models must still be discriminated
-        run: python -m scionfit.cli compare
+        run: python -m scionarena.conformance.cli compare
+
+      # A suite that passes everything measures nothing. The matrix has to
+      # separate the four reference models or the probes are decorative.
+      - name: the discrimination matrix must still discriminate
+        run: pytest -q -k discriminate
+
+      # Invariant 4. Two runs, two processes, one hash.
+      - name: determinism
+        run: pytest -q tests/test_trace.py

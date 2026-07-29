@@ -1,15 +1,15 @@
 # Adapter status
 
-`scionfit` does not reimplement SCION. It maps external sources onto the types
-in `scionfit.interface` so that one scenario definition and one probe suite run
-at every level of fidelity.
+`scionarena` does not reimplement SCION. It maps external sources onto the types
+in `scionarena.exposure.contracts` so that one scenario definition and one probe
+suite run at every level of fidelity.
 
 | Tier | Module | Upstream | Status |
 |---|---|---|---|
-| 0 | `adapters.scionpathml` | [ScionPathML](https://arxiv.org/abs/2509.07154) | **unvalidated stub** |
-| 1 | `env.world` | built in | working |
-| 2 | `adapters.dqnsim` | [scion-dqn-sim](https://github.com/netsys-lab/scion-dqn-sim) | **unvalidated stub** |
-| 3 | `adapters.testbed` | [ietf-scion-testbed](https://github.com/netsys-lab/ietf-scion-testbed) | **unvalidated stub** |
+| 0 | `backends.scionpathml` | [ScionPathML](https://arxiv.org/abs/2509.07154) | **unvalidated stub** |
+| 1 | `backends.analytical` | built in | working; rewritten in M1 |
+| 2 | `backends.dqnsim` | [scion-dqn-sim](https://github.com/netsys-lab/scion-dqn-sim) | **unvalidated stub** |
+| 3 | `backends.testbed` | [ietf-scion-testbed](https://github.com/netsys-lab/ietf-scion-testbed) | **unvalidated stub** |
 
 **Unvalidated means the type mapping is written and the call shape is fixed,
 but it has never been run against a real export or a live instance.** Do not
@@ -63,7 +63,7 @@ here, which turns the sim-to-real gap into something measurable.
 To validate:
 
 - [ ] Read `linkd`'s actual REST surface and correct the endpoints in
-      `adapters/testbed.py`. Everything there is inferred from the README.
+      `backends/testbed.py`. Everything there is inferred from the README.
 - [ ] Establish what hardware access we have. This tier needs a Proxmox host
       and will never run in CI.
 - [ ] Check whether ID-INT path tracing and the border-router RTT/traffic

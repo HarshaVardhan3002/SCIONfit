@@ -1,0 +1,37 @@
+# The same four gates CI runs, so a failure costs seconds rather than a
+# round trip. CI is still the authority; this is only the fast path.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.18.2
+    hooks:
+      - id: mypy
+        name: mypy --strict (core, exposure)
+        files: ^src/scionarena/(core|exposure)/
+        args: [--strict]
+        additional_dependencies: []
+
+  - repo: local
+    hooks:
+      - id: lint-imports
+        name: import-linter (core <- exposure <- front-ends)
+        entry: lint-imports
+        language: system
+        pass_filenames: false
+        files: ^src/scionarena/.*\.py$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: mixed-line-ending
+        args: [--fix=lf]
