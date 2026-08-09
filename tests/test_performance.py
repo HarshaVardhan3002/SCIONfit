@@ -17,6 +17,7 @@ import tracemalloc
 import numpy as np
 import pytest
 
+from scionarena.core.linkstate import LinkState
 from scionarena.core.segments import SegmentStore
 from scionarena.core.tiers import REALISTIC, STRESS
 from scionarena.core.topology import synthetic
@@ -111,6 +112,41 @@ def test_rebeaconing_the_whole_world_fits_in_a_step():
     assert elapsed < 20 * REALISTIC.step_budget_s, (
         f"a full re-beacon of {store.n_segments} segments took {elapsed * 1e3:.0f}ms"
     )
+
+
+def test_realistic_link_metrics_fit_in_the_step_budget():
+    """A step is: time moves, demand lands, every scope re-reads its paths.
+
+    Fifty scopes with a few thousand paths between them is a modest closed loop
+    and it is what M3 will do every tick. The metric arrays are memoised per
+    step for exactly this reason -- recomputing 40,000 directions once per scope
+    would be twenty times over budget while looking like the same code.
+    """
+    topo = synthetic(n_ases=REALISTIC.n_ases, n_links=REALISTIC.n_links, seed=0)
+    state = LinkState(topo, seed=0)
+    store = SegmentStore.for_tier(topo, REALISTIC, seed=0)
+    rng = np.random.default_rng(0)
+    scopes = scope_sample(REALISTIC.n_ases, n=50)
+    paths = {scope: [p.ifaces for p in store.paths_for(*scope)] for scope in scopes}
+
+    start = time.perf_counter()
+    steps = 10
+    for _ in range(steps):
+        state.advance_to(state.t + 60.0)
+        state.set_demand(rng.integers(0, state.n_ifaces, 200), rng.uniform(0, 500, 200))
+        for scope in scopes:
+            state.path_metrics_batch(paths[scope])
+    per_step = (time.perf_counter() - start) / steps
+    assert per_step < REALISTIC.step_budget_s, (
+        f"a step over {len(scopes)} scopes took {per_step * 1e3:.2f}ms, "
+        f"budget {REALISTIC.step_budget_s * 1e3}ms"
+    )
+
+
+def test_realistic_link_state_is_a_few_megabytes():
+    topo = synthetic(n_ases=REALISTIC.n_ases, n_links=REALISTIC.n_links, seed=0)
+    state = LinkState(topo, seed=0)
+    assert state.nbytes < 64 * 1024**2, f"link state is {state.nbytes / 1024**2:.1f} MiB"
 
 
 @pytest.mark.slow
