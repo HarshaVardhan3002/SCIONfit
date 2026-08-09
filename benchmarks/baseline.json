@@ -1,10 +1,34 @@
 {
-  "_comment": "Performance baselines for core/. Empty until M1 produces a substrate worth timing. Any change to core/ runs the benchmark suite and a regression beyond 15% on the realistic tier fails CI.",
-  "schema": 1,
+  "calibration_s": 0.009836500001256354,
+  "gated_tier": "realistic",
+  "recorded_on": {
+    "numpy": "2.4.6",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 112 Stepping 0, AuthenticAMD",
+    "python": "3.11.15"
+  },
+  "schema": 2,
   "tiers": {
-    "smoke": {},
-    "dev": {},
-    "realistic": {},
-    "stress": {}
-  }
+    "dev": {
+      "beaconing_build_s": 0.0036485000018728897,
+      "link_metrics_batch_s": 2.386600011959672e-05,
+      "link_state_bytes": 96000.0,
+      "n_segments": 762.0,
+      "path_query_cold_s": 0.0001769200002308935,
+      "substrate_step_s": 1.701169444358028e-05,
+      "topology_build_s": 0.0008415000047534704,
+      "topology_bytes": 40208.0
+    },
+    "realistic": {
+      "beaconing_build_s": 0.0747593000123743,
+      "link_metrics_batch_s": 0.00013709999999264255,
+      "link_state_bytes": 1200000.0,
+      "n_segments": 18327.0,
+      "path_query_cold_s": 0.002905641999968793,
+      "substrate_step_s": 0.0006361998055540931,
+      "topology_build_s": 0.007773799996357411,
+      "topology_bytes": 496008.0
+    }
+  },
+  "tolerance": 0.15
 }

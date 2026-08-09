@@ -11,6 +11,9 @@ regression cannot pass. The tracked numbers live in ``benchmarks/baseline.json``
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import time
 import tracemalloc
 
@@ -18,6 +21,7 @@ import numpy as np
 import pytest
 
 from scionarena.core.linkstate import LinkState
+from scionarena.core.scenario import Scenario, TimelineEvent, TopologySpec
 from scionarena.core.segments import SegmentStore
 from scionarena.core.tiers import REALISTIC, STRESS
 from scionarena.core.topology import synthetic
@@ -149,9 +153,117 @@ def test_realistic_link_state_is_a_few_megabytes():
     assert state.nbytes < 64 * 1024**2, f"link state is {state.nbytes / 1024**2:.1f} MiB"
 
 
+def realistic_scenario(duration_s: float = 3_600.0, **changes: object) -> Scenario:
+    """An hour of the realistic tier with something happening in it.
+
+    An hour rather than a minute because the beacon interval is five minutes:
+    a shorter run would measure a substrate that never re-signed anything and
+    would report a step cost the real loop never sees.
+    """
+    scenario = Scenario(
+        name="realistic-perf",
+        topology=TopologySpec(tier="realistic"),
+        duration_s=duration_s,
+        step_s=1.0,
+        **changes,  # type: ignore[arg-type]
+    )
+    return scenario.then(
+        TimelineEvent(at_s=duration_s / 3, kind="link_degrade", params={"link": 5, "factor": 0.1}),
+        TimelineEvent(at_s=duration_s / 2, kind="demand_surge", params={"mbps": 100.0}),
+    )
+
+
+def test_realistic_substrate_steps_within_budget():
+    """M1's step criterion, over the whole substrate rather than one component.
+
+    Clock, segments and link state advancing together, including the
+    re-beaconing rounds that fall inside the hour.
+    """
+    world = realistic_scenario().build()
+
+    start = time.perf_counter()
+    steps = world.run()
+    per_step = (time.perf_counter() - start) / steps
+
+    assert per_step < REALISTIC.step_budget_s, (
+        f"a substrate step took {per_step * 1e3:.3f}ms over {steps} steps, "
+        f"budget {REALISTIC.step_budget_s * 1e3}ms"
+    )
+
+
+def test_realistic_substrate_builds_within_budget():
+    start = time.perf_counter()
+    world = realistic_scenario().build()
+    elapsed = time.perf_counter() - start
+
+    assert world.topology.n_ases == REALISTIC.n_ases
+    assert elapsed < REALISTIC.build_budget_s, (
+        f"building the substrate took {elapsed:.2f}s, budget {REALISTIC.build_budget_s}s"
+    )
+
+
+def test_the_same_scenario_hashes_the_same_in_another_process(tmp_path):
+    """M1's determinism criterion: same seed, two processes, same trace hash.
+
+    A separate process, not a separate object, because the failure this catches
+    is a hash that depends on something process-local -- ``PYTHONHASHSEED``,
+    dict iteration order, an address in a repr -- and none of those move within
+    one interpreter.
+    """
+    scenario = Scenario(
+        name="determinism", topology=TopologySpec(tier="smoke"), duration_s=1_200.0, step_s=5.0
+    ).then(
+        TimelineEvent(at_s=300.0, kind="link_degrade", params={"link": 0, "factor": 0.2}),
+        TimelineEvent(at_s=600.0, kind="as_policy_filter", params={"as_": 1}),
+        TimelineEvent(at_s=900.0, kind="demand_surge", params={"mbps": 150.0}),
+    )
+    path = tmp_path / "scenario.json"
+    scenario.save(path)
+    script = (
+        "from scionarena.core.scenario import Scenario;"
+        f"w = Scenario.load({str(path)!r}).build();"
+        "w.run();"
+        "print(w.digest())"
+    )
+
+    digests = set()
+    for hashseed in ("1", "2"):
+        env = {**os.environ, "PYTHONHASHSEED": hashseed}
+        out = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True
+        )
+        digests.add(out.stdout.strip())
+
+    in_process = scenario.build()
+    in_process.run()
+    digests.add(in_process.digest())
+
+    assert len(digests) == 1, f"the trace hash moved between processes: {digests}"
+
+
 @pytest.mark.slow
 def test_stress_topology_builds_at_all():
     """Not gated on time. Gated on not falling over."""
     elapsed, topo = build_seconds(STRESS.n_ases, STRESS.n_links)
     assert topo.n_ases == STRESS.n_ases
     print(f"\nstress build: {elapsed:.2f}s, {topo.nbytes / 1024**2:.1f} MiB")
+
+
+@pytest.mark.slow
+def test_stress_substrate_steps_at_all():
+    """Not gated on time either. Recorded so a later regression is visible."""
+    scenario = Scenario(
+        name="stress-perf",
+        topology=TopologySpec(tier="stress"),
+        duration_s=600.0,
+        step_s=1.0,
+    )
+    start = time.perf_counter()
+    world = scenario.build()
+    built = time.perf_counter() - start
+
+    start = time.perf_counter()
+    steps = world.run()
+    per_step = (time.perf_counter() - start) / steps
+
+    print(f"\nstress substrate: build {built:.2f}s, step {per_step * 1e3:.3f}ms")

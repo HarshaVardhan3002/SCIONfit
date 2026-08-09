@@ -16,9 +16,9 @@ jobs:
       - run: pip install -e ".[dev]"
 
       - name: lint
-        run: ruff check src tests examples
+        run: ruff check src tests examples benchmarks
       - name: format
-        run: ruff format --check src tests examples
+        run: ruff format --check src tests examples benchmarks
       - name: types
         run: mypy
       - name: import direction (core <- exposure <- front-ends)
@@ -36,3 +36,13 @@ jobs:
       # Invariant 4. Two runs, two processes, one hash.
       - name: determinism
         run: pytest -q tests/test_trace.py
+
+      # Any change to core/ runs the benchmark suite; beyond 15% on the
+      # realistic tier fails. The baseline was recorded on a different machine
+      # than this runner, so the suite times a fixed workload and scales the
+      # comparison by it -- see the module docstring. If the runner turns out
+      # to be too noisy for 15%, loosen it here with --tolerance rather than
+      # deleting the step; a gate that never fires protects nothing.
+      - name: performance
+        if: matrix.python == '3.12'
+        run: python benchmarks/run.py
