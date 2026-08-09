@@ -77,6 +77,21 @@ type = "forbidden"
 source_modules = ["scionarena.reference"]
 forbidden_modules = ["scionarena.core", "scionarena.backends", "scionarena.conformance"]
 
+# M2, ADR 0008. The module a model imports has no edge into the substrate at
+# all -- which is why the agentic entry point takes a SessionLike protocol
+# declared in contracts rather than the real Session, and why this contract is
+# stronger than the one above rather than a restatement of it.
+[[tool.importlinter.contracts]]
+name = "The model-facing contract module reaches nothing"
+type = "forbidden"
+source_modules = ["scionarena.exposure.contracts"]
+forbidden_modules = [
+  "scionarena.core",
+  "scionarena.exposure.session",
+  "scionarena.exposure.tools",
+  "scionarena.backends",
+]
+
 # Backends are deliberately absent from the layers contract until M1: the v0.1
 # analytical world is written against the exposure contracts rather than against
 # core, which is upside down. M1 rewrites it and it joins the contract then.

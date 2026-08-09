@@ -8,6 +8,7 @@ Any information a model receives passes through this layer. There is no back
 door into :mod:`scionarena.core`.
 """
 
+from .budget import Budget, Cost, RateLimit, RateLimiter
 from .contracts import (
     SLA,
     Advisory,
@@ -19,19 +20,44 @@ from .contracts import (
     PathModel,
     PathRef,
     Prediction,
+    SessionLike,
+    ToolUsingModel,
     TopologySnapshot,
 )
+from .session import LogRecord, Session, ToolResult, drive_episode, run_episode
+from .streams import STREAMS, EventLog, RawEvent, Subscription
+from .tools import TOOLS, PathInfo, ToolError, ToolSpec, tool_definitions
 
 __all__ = [
     "SLA",
+    "STREAMS",
+    "TOOLS",
     "Advisory",
+    "Budget",
     "Capabilities",
+    "Cost",
     "Demand",
     "Dist",
+    "EventLog",
     "InterfaceAttrs",
+    "LogRecord",
     "Observation",
+    "PathInfo",
     "PathModel",
     "PathRef",
     "Prediction",
+    "RateLimit",
+    "RateLimiter",
+    "RawEvent",
+    "Session",
+    "SessionLike",
+    "Subscription",
+    "ToolError",
+    "ToolResult",
+    "ToolSpec",
+    "ToolUsingModel",
     "TopologySnapshot",
+    "drive_episode",
+    "run_episode",
+    "tool_definitions",
 ]

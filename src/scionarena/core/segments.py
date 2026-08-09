@@ -252,6 +252,8 @@ class SegmentStore:
         self._path_cache_size = path_cache_size
         #: segments hidden by AS policy filtering. Not a topology change.
         self._filtered: set[int] = set()
+        #: segment ids touched by the most recent re-beaconing round
+        self.last_resigned: list[int] = []
         #: (as, role) -> ((neighbour, local iface), ...). The CSR arrays are the
         #: right shape for whole-graph work and the wrong shape for walking one
         #: AS at a time in Python; slicing them per hop cost more than the search
@@ -660,6 +662,10 @@ class SegmentStore:
         return len(targets)
 
     def _resign_all(self, seg_ids: Sequence[int], t: float) -> None:
+        #: Which segments the last round touched. The beacon feed needs to know
+        #: *which*, not how many, and rescanning every segment to find out would
+        #: make a cheap step expensive at the realistic tier.
+        self.last_resigned = [int(i) for i in seg_ids]
         for seg_id in seg_ids:
             seg = self._segments[seg_id]
             self._segments[seg_id] = replace(

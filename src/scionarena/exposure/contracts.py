@@ -17,6 +17,12 @@ Design rules, in priority order:
 
 3.  Nothing here imports numpy, torch, or a SCION library.  The interface is
     plain Python so that implementing it costs a model author nothing.
+
+4.  This module imports **nothing from the rest of the project**, and in
+    particular nothing from ``core``.  That is why the agentic entry point takes
+    a ``SessionLike`` protocol declared here rather than the real ``Session``:
+    the module a model imports has no edge into the substrate at all, and
+    import-linter can prove it.  See ADR 0008.
 """
 
 from __future__ import annotations
@@ -36,6 +42,8 @@ __all__ = [
     "Advisory",
     "Capabilities",
     "PathModel",
+    "SessionLike",
+    "ToolUsingModel",
     "SLA",
 ]
 
@@ -320,6 +328,17 @@ class Capabilities:
     reports_confidence: bool = False
     stateful: bool = True
 
+    #: Implements ``act`` and drives itself through the tool registry rather
+    #: than being driven through observe/predict/advise.
+    uses_tools: bool = False
+    #: Decides for itself what to keep from the raw log. A model declaring this
+    #: is claiming it will not fall over when the history outgrows its context,
+    #: which is what M8 goes looking for.
+    manages_own_memory: bool = False
+    #: Returns before the deadline it was given. Cross-checked against the
+    #: session log, where a late call is flagged rather than refused.
+    respects_deadline: bool = False
+
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -379,3 +398,65 @@ class PathModel(Protocol):
     ) -> Advisory:
         """Return the distribution over paths that hosts should sample from."""
         ...
+
+
+# --------------------------------------------------------------------------
+# the agentic entry point
+# --------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SessionLike(Protocol):
+    """The handle an agentic model is given. One episode, one model.
+
+    Structural on purpose.  The real object lives in ``exposure.session`` and
+    owns the substrate; this declares only what a model may touch, and declaring
+    it *here* is what keeps this module free of any import that could reach the
+    network state.  ``call`` returns a result object with ``ok``, ``data``,
+    ``error`` and ``cost``; it is typed loosely because naming its class would
+    reintroduce the import this protocol exists to avoid.
+
+    Every call costs something and a refused call is a returned result, never an
+    exception.  Rate limits, exhausted budgets, timed-out probes and paths that
+    have stopped being offered all arrive this way, and handling them is part of
+    the job rather than an error path.
+    """
+
+    @property
+    def now(self) -> float:
+        """Simulated seconds. It moves while you work."""
+        ...
+
+    def call(self, tool: str, **arguments: Any) -> Any:
+        """Invoke a tool by name. See the registry for names and schemas."""
+        ...
+
+    def view(self) -> TopologySnapshot:
+        """What previous calls have told you, timestamped when they told you."""
+        ...
+
+    def known_paths(self, src: str | None = None, dst: str | None = None) -> list[PathRef]: ...
+
+    def drain(self, handle: str) -> Sequence[Any]:
+        """Take what a subscription has delivered since the last drain."""
+        ...
+
+    def advance(self, dt_s: float) -> None:
+        """Spend simulated time without doing anything."""
+        ...
+
+
+@runtime_checkable
+class ToolUsingModel(PathModel, Protocol):
+    """A model that drives itself.
+
+    ``act`` is handed the session and a deadline in simulated seconds and may
+    make any sequence of calls it can afford. Returning late is permitted and
+    recorded -- the network does not wait, so a decision that took too long is
+    applied to a world that moved on, which is the failure worth measuring.
+
+    A ``ToolUsingModel`` still implements the four ``PathModel`` methods, so the
+    same object can be run through the fixed cycle for comparison.
+    """
+
+    def act(self, session: SessionLike, deadline_s: float) -> None: ...
