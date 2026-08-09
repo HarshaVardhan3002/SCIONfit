@@ -48,8 +48,8 @@ from my_project import MyOracle
 
 card = check(MyOracle(), seed=0, repeats=5)
 print(card.to_terminal())
-print(card.verdict)             # CONFORMANT | PARTIAL | OPEN-LOOP ONLY | ...
-print(card.closed_loop_ready)   # can this be meaningfully stability-tested?
+print(card.verdict)  # CONFORMANT | PARTIAL | OPEN-LOOP ONLY | ...
+print(card.closed_loop_ready)  # can this be meaningfully stability-tested?
 ```
 
 ## Implement the interface
@@ -59,10 +59,12 @@ One class, four methods. A twenty-line moving average can satisfy it; that is a 
 ```python
 from scionarena import Capabilities, Dist, Prediction, Advisory
 
+
 class MyOracle:
     capabilities = Capabilities(
-        name="MyOracle", version="0.1",
-        distributional=True,        # declare only what you actually do
+        name="MyOracle",
+        version="0.1",
+        distributional=True,  # declare only what you actually do
         demand_conditioned=True,
         emits_assignment=True,
     )

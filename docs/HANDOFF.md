@@ -136,8 +136,8 @@ look plausible.
 The substrate must therefore expose **both** identifiers on every path:
 
 ```python
-path.structural_id   # hash of the ordered interface sequence — stable across re-signing
-path.segment_id      # tied to the current cryptographic material — changes on refresh
+path.structural_id  # hash of the ordered interface sequence — stable across re-signing
+path.segment_id  # tied to the current cryptographic material — changes on refresh
 ```
 
 and be configurable as to which one `path_id` aliases:
