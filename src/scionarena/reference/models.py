@@ -339,7 +339,32 @@ class ReferenceStochastic:
         s = max(0.0, min(1.0, share))
         return 1.0 + 1.8 * (s**3)
 
-    def _path_load(self, path: PathRef, demand: Demand | None) -> float:
+    def _interface_load(self, nd: Mapping[str, float]) -> dict[str, float]:
+        """Total share crossing each link, in one pass over the demand vector.
+
+        This used to be asked per path, per link, by scanning every path the
+        model had ever seen -- and ``self._paths`` accumulates across scopes
+        and rounds, so the cost was quadratic in the size of the network and
+        was paid ``msa_iters`` times per advisory.  At the smoke tier that is
+        invisible; at the realistic tier it was minutes per decision round.
+
+        A path carrying no share contributes nothing to any link, so only the
+        demand vector needs walking, and each path is counted once per
+        *distinct* link it crosses, which is what the membership test it
+        replaces did.
+        """
+        totals: dict[str, float] = defaultdict(float)
+        for path_id, share in nd.items():
+            path = self._paths.get(path_id)
+            if path is None:
+                continue
+            for iid in dict.fromkeys(path.interfaces):
+                totals[iid] += share
+        return totals
+
+    def _path_load(
+        self, path: PathRef, nd: Mapping[str, float] | None, busiest_by_iface: Mapping[str, float]
+    ) -> float:
         """How loaded this path is, in [0, 1].
 
         Blends two terms:
@@ -355,20 +380,18 @@ class ReferenceStochastic:
         sensitive without losing the coupling, and both terms are
         non-decreasing in this path's own share, which preserves R7.
         """
-        if demand is None:
+        if nd is None:
             return 0.0
-        nd = demand.normalised()
         own = nd.get(path.path_id, 0.0)
-        busiest = 0.0
-        for iid in path.interfaces:
-            tot = sum(nd.get(q.path_id, 0.0) for q in self._paths.values() if iid in q.interfaces)
-            busiest = max(busiest, tot)
+        busiest = max((busiest_by_iface.get(iid, 0.0) for iid in path.interfaces), default=0.0)
         return max(0.0, min(1.0, 0.5 * own + 0.5 * busiest))
 
     # ---------------- prediction ----------------
 
     def predict(self, topo, paths, horizon_s: float = 0.0, demand: Demand | None = None):
         age = self._age(topo)
+        nd = demand.normalised() if demand is not None else None
+        busiest_by_iface = self._interface_load(nd) if nd is not None else {}
         out: dict[str, Prediction] = {}
         for p in paths:
             lat, var, bw_min, surv = 0.0, 0.0, float("inf"), 1.0
@@ -382,7 +405,7 @@ class ReferenceStochastic:
                 if self._n.get(iid, 0) == 0:
                     unobserved += 1
 
-            load = self._path_load(p, demand)
+            load = self._path_load(p, nd, busiest_by_iface)
             f = self._load_factor(load)
             lat *= f
             bw_min = (0.0 if bw_min == float("inf") else bw_min) / f

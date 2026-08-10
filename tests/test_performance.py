@@ -267,3 +267,112 @@ def test_stress_substrate_steps_at_all():
     per_step = (time.perf_counter() - start) / steps
 
     print(f"\nstress substrate: build {built:.2f}s, step {per_step * 1e3:.3f}ms")
+
+
+# --------------------------------------------------------------------------
+# the reference model, at the scope counts M3 asks for
+#
+# Regression tests for the bug that made ">= 100 concurrent scopes over
+# realistic" impossible to demonstrate: ``ReferenceStochastic._path_load``
+# asked, for every path and every link on it, which of the paths the model had
+# ever seen crossed that link -- inside the MSA loop, so ``msa_iters`` times
+# per advisory. ``self._paths`` accumulates across scopes and rounds, so the
+# cost grew with the whole network rather than with the scope being advised,
+# and a decision round at the realistic tier took minutes instead of seconds.
+
+
+def _snapshot_with(paths):
+    from scionarena.exposure.contracts import TopologySnapshot
+
+    return TopologySnapshot(t=0.0, interfaces={}, paths=tuple(paths))
+
+
+def _path(index: int, hops: int = 4):
+    from scionarena.exposure.contracts import PathRef
+
+    return PathRef(
+        path_id=f"p{index}",
+        src="1-ff00:0:1",
+        dst="1-ff00:0:2",
+        interfaces=tuple(f"if{(index + h) % 400}" for h in range(hops)),
+    )
+
+
+class _NoScan(dict):
+    """A path table that refuses to be walked in its entirety."""
+
+    def values(self):  # pragma: no cover - the point is that it is not called
+        raise AssertionError("predict rescanned every path the model has seen")
+
+
+def test_predict_does_not_rescan_every_path_the_model_has_seen():
+    from scionarena.exposure.contracts import Demand
+    from scionarena.reference.models import ReferenceStochastic
+
+    model = ReferenceStochastic()
+    seen = [_path(i) for i in range(500)]
+    model.reset(_snapshot_with(seen))
+    model._paths = _NoScan(model._paths)
+
+    asked = seen[:20]
+    demand = Demand(per_path={p.path_id: 1.0 / len(asked) for p in asked}, n_hosts=100)
+    out = model.predict(_snapshot_with(asked), asked, demand=demand)
+    assert len(out) == len(asked)
+
+
+def test_the_interface_totals_are_what_the_scan_they_replaced_computed():
+    """Same answer, one pass instead of one pass per path per link."""
+    from scionarena.exposure.contracts import Demand
+    from scionarena.reference.models import ReferenceStochastic
+
+    model = ReferenceStochastic()
+    seen = [_path(i) for i in range(60)]
+    model.reset(_snapshot_with(seen))
+    nd = Demand(per_path={p.path_id: float(i + 1) for i, p in enumerate(seen)}).normalised()
+
+    totals = model._interface_load(nd)
+    for iid in {i for p in seen for i in p.interfaces}:
+        naive = sum(nd.get(q.path_id, 0.0) for q in seen if iid in q.interfaces)
+        assert totals.get(iid, 0.0) == pytest.approx(naive)
+
+
+class _Counting(dict):
+    """A path table that records how often it was consulted."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lookups = 0
+
+    def get(self, key, default=None):
+        self.lookups += 1
+        return super().get(key, default)
+
+
+def test_the_cost_of_an_advisory_does_not_grow_with_the_rest_of_the_network():
+    """The property, stated without a clock.
+
+    A scope's advisory should cost what that scope's path set costs. Asserting
+    it by timing is unreliable and, measured, too weak to catch the regression
+    it is for: the quadratic version answered this same case in 1.5s.
+    """
+    from scionarena.exposure.contracts import SLA, Demand
+    from scionarena.reference.models import ReferenceStochastic
+
+    def lookups_with(n_seen: int) -> int:
+        model = ReferenceStochastic()
+        seen = [_path(i) for i in range(n_seen)]
+        model.reset(_snapshot_with(seen))
+        model._paths = _Counting(model._paths)
+        asked = seen[:200]
+        snapshot = _snapshot_with(asked)
+        demand = Demand(per_path={p.path_id: 1.0 / len(asked) for p in asked}, n_hosts=200)
+        model.predict(snapshot, asked, demand=demand)
+        model.advise(snapshot, asked, SLA(), n_hosts=200)
+        return model._paths.lookups
+
+    small = lookups_with(400)
+    large = lookups_with(20000)  # what 100 concurrent scopes leaves behind
+    assert small == large, (
+        f"advising one scope consulted {small} paths against a small network and "
+        f"{large} against a large one; the cost is following the network again"
+    )

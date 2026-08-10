@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Sequence
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ..exposure.contracts import (
@@ -167,24 +168,43 @@ class World:
         loss = min(0.5, ls.base_loss + 0.06 * max(0.0, util - 0.75) ** 2 * 40.0)
         return lat, avail, loss
 
+    def interface_load(self, demand: Demand | None) -> dict[str, float]:
+        """Offered share on every link, in one pass over the paths.
+
+        Hoisted out of :meth:`path_metrics` because that is called once per
+        path and used to rescan every path once per link, which is quadratic
+        in the size of the network for anything that walks the path set --
+        :meth:`observe` does exactly that.
+        """
+        if demand is None:
+            return {}
+        totals: dict[str, float] = defaultdict(float)
+        nd = demand.normalised()
+        for p in self.paths:
+            share = nd.get(p.path_id, 0.0)
+            for iid in dict.fromkeys(p.interfaces):
+                totals[iid] += share
+        return totals
+
     def path_metrics(
-        self, path: PathRef, demand: Demand | None = None
+        self,
+        path: PathRef,
+        demand: Demand | None = None,
+        interface_load: Mapping[str, float] | None = None,
     ) -> tuple[float, float, float]:
         """Compose link metrics along a path.
 
         latency = sum, bandwidth = min, loss = 1 - prod(1 - p).
         This is the ground truth that probe R2's composition test refers to.
+
+        Pass ``interface_load`` from :meth:`interface_load` when calling this
+        for many paths under one demand vector; it is computed here otherwise.
         """
-        # traffic on a link is the sum over paths using it
+        loads = self.interface_load(demand) if interface_load is None else interface_load
         lat_tot, bw_min, surv = 0.0, float("inf"), 1.0
         for iid in path.interfaces:
-            load = 0.0
-            if demand is not None:
-                nd = demand.normalised()
-                for p in self.paths:
-                    if iid in p.interfaces:
-                        load += nd.get(p.path_id, 0.0)
-                load *= 0.9  # scale offered load into a fraction of capacity
+            # scale offered load into a fraction of capacity
+            load = 0.9 * loads.get(iid, 0.0) if demand is not None else 0.0
             lat, bw, ls = self.link_metrics(iid, load)
             lat_tot += lat
             bw_min = min(bw_min, bw)
@@ -214,11 +234,12 @@ class World:
         real telemetry (you only measure paths somebody is using).
         """
         paths = list(paths if paths is not None else self.paths)
+        loads = self.interface_load(demand)
         out: list[Observation] = []
         for p in paths:
             if self.rng.random() > coverage:
                 continue
-            lat, bw, ls = self.path_metrics(p, demand)
+            lat, bw, ls = self.path_metrics(p, demand, loads)
 
             def jitter(v: float) -> float:
                 return v * (1.0 + self.rng.gauss(0.0, noise))
