@@ -287,6 +287,15 @@ here is the X" is.
 Ten milestones. M0–M4 are strictly sequential. M5/M6/M7 parallelise after M4. Full specs
 in `docs/milestones/`.
 
+**Landed: M0 through M3.** The substrate beacons, composes paths and carries load at the
+realistic tier; models reach it only through costed, rate-limited tools; and the loop is
+closed. `scionarena demo` and `scionarena ui` produce the M3 result in one command. Read
+`docs/milestones/M3.md` before M4 -- in particular its "known limitation", which is the
+first thing M4 should fix: series are sampled once per decision round, and a model whose
+rounds get more expensive as it runs therefore hands the detectors a grid that is not
+uniform. Sampling on the world's own clock changes what a series is, so it belongs at the
+start of the instrumentation milestone rather than bolted onto the end of this one.
+
 | | milestone | one-line goal | gate |
 |---|---|---|---|
 | **M0** | foundation reset | repo restructured, existing tests green in new layout | CI green, no behaviour change |
