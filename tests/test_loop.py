@@ -122,6 +122,41 @@ def test_a_turn_that_overruns_its_round_is_counted_not_hidden(runs) -> None:
         assert "overruns" in result.report()
 
 
+def test_the_cadence_widens_to_fit_a_round_it_cannot_otherwise_keep(scenario) -> None:
+    """Found at the dev tier with forty scopes: every round overran.
+
+    Probes are charged per scope, so the cost of a round grows with the number
+    of scopes, and a 30 s cadence that is generous for eight of them is not
+    survivable for forty. The samples then land wherever the turns happened to
+    finish and the FFT is reading a series that was never uniformly sampled --
+    which is worse than a slow run, because nothing about it looks wrong.
+    """
+    many = busiest_scopes(scenario.build(), 24)
+    result = run_loop(
+        REFERENCE_MODELS["minrtt"](), scenario, many, config=LoopConfig(cycles=12, seed=7)
+    )
+    assert result.overruns == 0
+    assert result.cadence_s > LoopConfig().decision_s
+
+
+def test_the_widening_can_be_turned_off_and_then_the_rounds_do_overrun(scenario) -> None:
+    """The knob has to change something, or it is documentation pretending to be code."""
+    many = busiest_scopes(scenario.build(), 24)
+    result = run_loop(
+        REFERENCE_MODELS["minrtt"](),
+        scenario,
+        many,
+        config=LoopConfig(cycles=12, seed=7, adaptive_cadence=False),
+    )
+    assert result.overruns > 0
+    assert result.cadence_s == LoopConfig().decision_s
+
+
+def test_a_cadence_that_already_fits_is_left_alone(runs, config) -> None:
+    for result in runs.values():
+        assert result.cadence_s == config.decision_s
+
+
 # --------------------------------------------------------------------------
 # what the loop measures things on
 

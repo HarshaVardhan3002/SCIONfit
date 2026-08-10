@@ -1,12 +1,12 @@
-model                swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  calls  wall_clock_s
--------------------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  -----  ------------
-MinRTTGreedy         3.3     0.4796       0.2968             4.08             0.2374     1313          0               1.869           2         7681   2.18        
-ReferenceStochastic  0.5457  0.0983       0.2059             3.17             0.5455     442.2         0.0606          1.44            0         7681   7.879       
+model                decision_s  swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  calls  wall_clock_s
+-------------------  ----------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  -----  ------------
+MinRTTGreedy         30          3.246   0.4692       0.5075             5                0.2273     1296          0               1.916           2         7777   2.214       
+ReferenceStochastic  30          0.5443  0.1134       0.148              3.28             0.5505     448.4         0.0604          1.435           0         7777   7.997       
 
-[PASS] greedy link amplitude >= 4x stochastic: 6.05x  (3.300 vs 0.546)
-[PASS] greedy split amplitude >= 4x stochastic: 4.88x  (0.480 vs 0.098)
-[PASS] greedy mean path cost >= 2x stochastic: 2.97x  (1313 ms vs 442 ms)
-[FAIL] M3 as originally written: peak dominance > 0.5 (see ADR 0010): 0.297
-[FAIL] samples sit on the decision grid (no overruns): 2, 0
+[PASS] greedy link amplitude >= 4x stochastic: 5.96x  (3.246 vs 0.544)
+[PASS] greedy split amplitude >= 4x stochastic: 4.14x  (0.469 vs 0.113)
+[PASS] greedy mean path cost >= 2x stochastic: 2.89x  (1296 ms vs 448 ms)
+[PASS] M3 as originally written: peak dominance > 0.5 (see ADR 0010): 0.507
+[PASS] samples sit on the decision grid (< 1% late): 2/240 at 30s, 0/240 at 30s
 
-wrote docs\evidence\m3-smoke\report.html in 10.61s
+wrote docs\evidence\m3-smoke\report.html in 10.77s

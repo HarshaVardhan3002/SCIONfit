@@ -31,6 +31,7 @@ the tools, as before.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -66,10 +67,23 @@ class LoopConfig:
 
     #: Decision rounds. Also the length of every measured series.
     cycles: int = 240
-    #: Simulated seconds per decision round. Well above what a turn costs, so
-    #: that the samples sit on a uniform grid; overruns are counted and
-    #: reported rather than hidden.
+    #: Simulated seconds per decision round, and the *floor* on the cadence the
+    #: loop actually keeps. The samples have to sit on a uniform grid or the
+    #: detectors are reading a series that does not exist, so if a round costs
+    #: more than this -- and at forty scopes it does, because every scope's
+    #: probes are charged -- the cadence is widened once, before the first
+    #: sample, and held. See ``adaptive_cadence``.
     decision_s: float = 30.0
+    #: Widen ``decision_s`` to fit the round if it does not. Turning this off
+    #: does not make the loop faster; it makes it advance by whatever the turns
+    #: happened to cost, count every round as an overrun, and hand the FFT an
+    #: unevenly sampled series. It exists so that behaviour can be *tested*.
+    adaptive_cadence: bool = True
+    #: Unsampled rounds run before the episode to find out what a round costs
+    #: here. They are thrown away rather than measured, which is the price of
+    #: every sampled round sitting on one grid; the world they leave behind is
+    #: the world the episode starts from.
+    calibration_cycles: int = 3
     limit: int = 20
     probes_per_cycle: int = 2
     n_hosts: int = 100
@@ -96,6 +110,9 @@ class LoopResult:
     model: str
     scenario: str
     config: LoopConfig
+    #: Simulated seconds per decision round as actually kept, which is
+    #: ``config.decision_s`` unless the rounds did not fit inside it.
+    cadence_s: float = 0.0
     #: Interface index -> total utilisation, one sample per decision round.
     #: Background traffic included: this is what an operator's own graph would
     #: show, and it is what the figure plots.
@@ -195,6 +212,7 @@ class LoopResult:
             "model": self.model,
             "scenario": self.scenario,
             "cycles": self.config.cycles,
+            "decision_s": round(self.cadence_s, 1),
             "scopes": self.hosts_summary.get("scopes", 0),
             "hosts": self.hosts_summary.get("hosts", 0),
             "swing": round(self.swing(), 4),
@@ -284,24 +302,75 @@ def run_loop(
     handle = str(subscribed.get("handle", "")) if subscribed.ok else ""
 
     started = time.perf_counter()
-    t0 = session.now
+    cadence = _calibrate(model, session, scopes, indices, cfg, handle)
+    result.cadence_s = cadence
+
+    deadline = session.now + cadence
     for cycle in range(cfg.cycles):
         published = len(session.advisories)
-        feed = _drain_by_scope(session, handle)
-        for (src, dst), _ in zip(scopes, indices, strict=True):
-            _one_scope(model, session, src, dst, cycle, cfg, feed.get((src, dst), []))
-        deadline = t0 + (cycle + 1) * cfg.decision_s
+        _turn(model, session, scopes, indices, cfg, cycle, handle)
         if session.now < deadline:
             session.advance(deadline - session.now)
         else:
             result.overruns += 1
         _sample(result, world, session, tracked, scopes, indices, published)
+        deadline += cadence
         if on_cycle is not None:
             on_cycle(cycle + 1, cfg.cycles)
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
     result.hosts_summary = world.hosts.summary()
     return result
+
+
+def _turn(
+    model: PathModel,
+    session: Session,
+    scopes: Sequence[tuple[str, str]],
+    indices: Sequence[tuple[int, int]],
+    cfg: LoopConfig,
+    cycle: int,
+    handle: str,
+) -> None:
+    """One decision round: drain what arrived, then let the model act per scope."""
+    feed = _drain_by_scope(session, handle)
+    for (src, dst), _ in zip(scopes, indices, strict=True):
+        _one_scope(model, session, src, dst, cycle, cfg, feed.get((src, dst), []))
+
+
+def _calibrate(
+    model: PathModel,
+    session: Session,
+    scopes: Sequence[tuple[str, str]],
+    indices: Sequence[tuple[int, int]],
+    cfg: LoopConfig,
+    handle: str,
+) -> float:
+    """Find a cadence the episode can actually keep, by running a few rounds.
+
+    Found at the dev tier with forty scopes, where every one of 240 rounds
+    overran a 30 s cadence: probes are charged per scope, so the cost of a round
+    grows with the number of scopes, and the world then advanced by whatever the
+    turns happened to cost. Nothing about that looks wrong in the output -- the
+    series is the right length and the numbers are plausible -- but it is not
+    uniformly sampled, and every detector here assumes it is.
+
+    Measuring beats predicting: the cost depends on the model's own diet, on how
+    the rate limiter falls out across border routers, and on which tools the
+    model chose. Rounds are timed rather than estimated, the worst is taken
+    rather than the mean because one slow round in the episode is an overrun,
+    and the headroom is 30%.
+    """
+    if not cfg.adaptive_cadence or cfg.calibration_cycles <= 0:
+        return cfg.decision_s
+    worst = 0.0
+    for cycle in range(cfg.calibration_cycles):
+        mark = session.now
+        _turn(model, session, scopes, indices, cfg, cycle, handle)
+        worst = max(worst, session.now - mark)
+        if session.now < mark + cfg.decision_s:
+            session.advance(mark + cfg.decision_s - session.now)
+    return max(cfg.decision_s, float(math.ceil(worst * 1.3)))
 
 
 def _params_for(

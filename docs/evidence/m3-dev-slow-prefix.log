@@ -1,0 +1,14 @@
+model                     swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  calls  wall_clock_s
+------------------------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  -----  ------------
+MinRTTGreedy              4.907   0.4747       0.5525             2                0.5859     2188          0.104           3.127           240       38401  53.86       
+ReferenceStochastic       0.2952  0.1533       0.9088             3.85             0.5404     1204          0.0895          3.057           240       38401  2585        
+MinRTTGreedy +8s latency  4.36    0.4723       0.4673             2                0.5101     2196          0.0707          11.11           240       38401  50.77       
+
+[PASS] greedy link amplitude >= 4x stochastic: 16.62x  (4.907 vs 0.295)
+[FAIL] greedy split amplitude >= 4x stochastic: 3.10x  (0.475 vs 0.153)
+[FAIL] greedy mean path cost >= 2x stochastic: 1.82x  (2188 ms vs 1204 ms)
+[PASS] M3 as originally written: peak dominance > 0.5 (see ADR 0010): 0.552
+[FAIL] samples sit on the decision grid (no overruns): 240, 240, 240
+[PASS] a slower model is measurably worse, same model and seed: 2196 ms vs 2188 ms at 11.11 s decision latency
+
+wrote docs\evidence\m3-dev-slow\report.html in 2700.0s

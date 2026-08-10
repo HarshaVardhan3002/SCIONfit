@@ -37,9 +37,15 @@ __all__ = ["main", "run_demo", "sections", "verdicts"]
 #: number fitted to whichever tier it was first run at.
 MIN_SWING_RATIO = 4.0
 MIN_COST_RATIO = 2.0
+#: Rounds allowed to finish late before the sample grid stops being a grid. Not
+#: zero: the cadence is calibrated from a few rounds and a probe that waits on a
+#: rate limit can still push one round past it. One in a hundred is jitter; a
+#: tenth of them is a series the detectors should not be run over at all.
+MAX_OVERRUN_FRACTION = 0.01
 
 CARD_COLUMNS = (
     "model",
+    "decision_s",
     "swing",
     "share_swing",
     "oscillation_index",
@@ -140,9 +146,11 @@ def verdicts(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
             "ok": old > 0.5,
         },
         {
-            "criterion": "samples sit on the decision grid (no overruns)",
-            "measured": ", ".join(f"{r.overruns}" for r in results),
-            "ok": all(r.overruns == 0 for r in results),
+            "criterion": f"samples sit on the decision grid (< {MAX_OVERRUN_FRACTION:.0%} late)",
+            "measured": ", ".join(
+                f"{r.overruns}/{r.config.cycles} at {r.cadence_s:g}s" for r in results
+            ),
+            "ok": all(r.overruns <= MAX_OVERRUN_FRACTION * r.config.cycles for r in results),
         },
     ]
     if len(results) > 2:

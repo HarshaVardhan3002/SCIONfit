@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "tier": "dev",
+    "scopes": 40,
+    "cycles": 240,
+    "hosts_per_scope": 200,
+    "seed": 7,
+    "wall_clock_s": 2700.0,
+    "digests": {
+      "MinRTTGreedy": "a4a254e17ca876927b03a9860190fd0f",
+      "ReferenceStochastic": "e5faa2b0ac30e4ac58ed551fee2eeb9f",
+      "MinRTTGreedy +8s latency": "3b80b11d1c9e51d228245806032b8034"
+    }
+  },
+  "runs": [
+    {
+      "model": "MinRTTGreedy",
+      "scenario": "dev-default",
+      "cycles": 240,
+      "scopes": 40,
+      "hosts": 8000,
+      "swing": 4.9065,
+      "share_swing": 0.4747,
+      "oscillation_index": 0.5525,
+      "share_oscillation": 0.6622,
+      "dominant_period": 2.0,
+      "flap_rate": 0.5859,
+      "mean_cost_ms": 2188.263,
+      "mean_deviation": 0.104,
+      "mean_latency_s": 3.1272,
+      "overruns": 240,
+      "calls": 38401,
+      "wall_clock_s": 53.856,
+      "digest": "a4a254e17ca876927b03a9860190fd0f"
+    },
+    {
+      "model": "ReferenceStochastic",
+      "scenario": "dev-default",
+      "cycles": 240,
+      "scopes": 40,
+      "hosts": 8000,
+      "swing": 0.2952,
+      "share_swing": 0.1533,
+      "oscillation_index": 0.9088,
+      "share_oscillation": 0.9069,
+      "dominant_period": 3.85,
+      "flap_rate": 0.5404,
+      "mean_cost_ms": 1204.031,
+      "mean_deviation": 0.0895,
+      "mean_latency_s": 3.057,
+      "overruns": 240,
+      "calls": 38401,
+      "wall_clock_s": 2585.211,
+      "digest": "e5faa2b0ac30e4ac58ed551fee2eeb9f"
+    },
+    {
+      "model": "MinRTTGreedy +8s latency",
+      "scenario": "dev-default",
+      "cycles": 240,
+      "scopes": 40,
+      "hosts": 8000,
+      "swing": 4.3603,
+      "share_swing": 0.4723,
+      "oscillation_index": 0.4673,
+      "share_oscillation": 0.5918,
+      "dominant_period": 2.0,
+      "flap_rate": 0.5101,
+      "mean_cost_ms": 2196.074,
+      "mean_deviation": 0.0707,
+      "mean_latency_s": 11.113,
+      "overruns": 240,
+      "calls": 38401,
+      "wall_clock_s": 50.771,
+      "digest": "3b80b11d1c9e51d228245806032b8034"
+    }
+  ],
+  "verdicts": [
+    {
+      "criterion": "greedy link amplitude >= 4x stochastic",
+      "measured": "16.62x  (4.907 vs 0.295)",
+      "ok": true
+    },
+    {
+      "criterion": "greedy split amplitude >= 4x stochastic",
+      "measured": "3.10x  (0.475 vs 0.153)",
+      "ok": false
+    },
+    {
+      "criterion": "greedy mean path cost >= 2x stochastic",
+      "measured": "1.82x  (2188 ms vs 1204 ms)",
+      "ok": false
+    },
+    {
+      "criterion": "M3 as originally written: peak dominance > 0.5 (see ADR 0010)",
+      "measured": "0.552",
+      "ok": true
+    },
+    {
+      "criterion": "samples sit on the decision grid (no overruns)",
+      "measured": "240, 240, 240",
+      "ok": false
+    },
+    {
+      "criterion": "a slower model is measurably worse, same model and seed",
+      "measured": "2196 ms vs 2188 ms at 11.11 s decision latency",
+      "ok": true
+    }
+  ]
+}
