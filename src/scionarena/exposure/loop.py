@@ -13,16 +13,19 @@ easy half of the answer.
 
 Two things about the sampling, because the detector depends on both.
 
-*The series is sampled at the decision cadence.* A model gets a turn every
-``decision_s`` simulated seconds whatever its calls cost it, and one sample of
-every tracked link is taken per turn. Oscillation is a property of a control
-loop relative to its own cadence -- "flaps every other decision" -- so a series
-sampled at any other rate makes the fast band mean something else.
+*The series is sampled on the world's clock, not on the model's turn.* Samples
+land every ``sample_s`` simulated seconds whatever the model's rounds cost, taken
+by a substrate tap rather than by this driver -- see ``instrument/sampler.py``
+and ADR 0011. The default rate is one sample per decision round, because
+oscillation is a property of a control loop relative to its own cadence, and the
+fast band is defined in rounds and converted to the series' axis so that the two
+stay comparable when they differ.
 
 *The world keeps running underneath.* Between turns the substrate ticks at
 ``scenario.step_s``, hosts resample, and load moves. A model whose probes cost
 it eight seconds does not get eight frozen seconds; it gets a turn that starts
-later and an advisory that lands later.
+later and an advisory that lands later -- and, now, eight seconds of samples of a
+network nobody is advising, which is what the delay actually looks like.
 
 Nothing here summarises anything for the model. The series are read off the
 substrate for the report card; the model sees exactly what it asked for through
@@ -45,11 +48,14 @@ from scionarena.exposure.budget import Budget
 from scionarena.exposure.contracts import SLA, Advisory, Observation, PathModel, PathRef
 from scionarena.exposure.session import Session, ToolResult, _observations
 from scionarena.instrument.detectors import (
+    band_min,
     dominant_period,
     fast_swing,
     flap_rate,
     oscillation_index,
+    warmup_samples,
 )
+from scionarena.instrument.sampler import Sampler, Series
 
 __all__ = ["LoopConfig", "LoopResult", "run_loop", "busiest_scopes", "compare"]
 
@@ -65,24 +71,29 @@ class LoopConfig:
     buried in the driver.
     """
 
-    #: Decision rounds. Also the length of every measured series.
+    #: Decision rounds. The length of the episode; no longer the length of the
+    #: measured series, which is set by ``sample_s`` and by what the rounds cost.
     cycles: int = 240
-    #: Simulated seconds per decision round, and the *floor* on the cadence the
-    #: loop actually keeps. The samples have to sit on a uniform grid or the
-    #: detectors are reading a series that does not exist, so if a round costs
-    #: more than this -- and at forty scopes it does, because every scope's
-    #: probes are charged -- the cadence is widened once, before the first
-    #: sample, and held. See ``adaptive_cadence``.
+    #: Simulated seconds a decision round is *given*. A round that costs more
+    #: than this overruns, its advice lands late, and the next round starts late;
+    #: the sample grid is unaffected either way (ADR 0011).
     decision_s: float = 30.0
-    #: Widen ``decision_s`` to fit the round if it does not. Turning this off
-    #: does not make the loop faster; it makes it advance by whatever the turns
-    #: happened to cost, count every round as an overrun, and hand the FFT an
-    #: unevenly sampled series. It exists so that behaviour can be *tested*.
-    adaptive_cadence: bool = True
+    #: Simulated seconds between samples. ``None`` means one per decision round,
+    #: which reproduces M3's axis exactly and is what every threshold in
+    #: ``docs/milestones/`` was measured against. A multiple of
+    #: ``scenario.step_s`` is required, or grid points fall between ticks.
+    sample_s: float | None = None
+    #: Widen ``decision_s`` until the rounds fit, measured over
+    #: ``calibration_cycles`` throwaway rounds. **Off by default since M4.** It
+    #: existed to protect the sample grid, the sampler now protects itself, and
+    #: what remains of it is a harness that changes the scenario's cadence in
+    #: response to how slow the model is -- which hides the finding instead of
+    #: reporting it. Kept because it makes "the same model at a cadence it can
+    #: keep" a controlled comparison rather than a rerun.
+    adaptive_cadence: bool = False
     #: Unsampled rounds run before the episode to find out what a round costs
-    #: here. They are thrown away rather than measured, which is the price of
-    #: every sampled round sitting on one grid; the world they leave behind is
-    #: the world the episode starts from.
+    #: here, when ``adaptive_cadence`` is on. Thrown away rather than measured;
+    #: the world they leave behind is the world the episode starts from.
     calibration_cycles: int = 3
     limit: int = 20
     probes_per_cycle: int = 2
@@ -111,38 +122,73 @@ class LoopResult:
     scenario: str
     config: LoopConfig
     #: Simulated seconds per decision round as actually kept, which is
-    #: ``config.decision_s`` unless the rounds did not fit inside it.
+    #: ``config.decision_s`` unless ``adaptive_cadence`` widened it.
     cadence_s: float = 0.0
-    #: Interface index -> total utilisation, one sample per decision round.
-    #: Background traffic included: this is what an operator's own graph would
-    #: show, and it is what the figure plots.
-    utilisation: dict[int, list[float]] = field(default_factory=dict)
-    #: Interface index -> load from the advised populations alone, over
-    #: capacity. What the model caused rather than what happened, and therefore
-    #: what the detectors read. ADR 0010: the background resamples on a bucket
-    #: comparable to the decision cadence, so leaving it in the detector's
-    #: series measures the environment's noise as if it were the model's.
-    advised_load: dict[int, list[float]] = field(default_factory=dict)
-    #: Scope -> realised share of that scope's *first* path, one sample per
-    #: round. A fixed reference path, not the busiest one: for any
-    #: winner-take-all model the busiest path's share is 1.0 every round
-    #: whichever path is winning, which hides the swapping this is here to see.
-    path_share: dict[tuple[str, str], list[float]] = field(default_factory=dict)
-    #: Per round, over every scope: the largest gap between intended and realised.
-    deviation: list[float] = field(default_factory=list)
-    #: Per round: load-weighted mean path cost. What the model is nominally
-    #: optimising, and what oscillation destroys.
-    mean_cost_ms: list[float] = field(default_factory=list)
-    #: Per round: mean decision latency of the advisories published in it.
+    #: Simulated seconds between samples, as the sampler actually kept them.
+    sample_s: float = 0.0
+    #: Everything the world did, on the world's own grid. Written by a substrate
+    #: tap rather than by this driver, so its length is set by the episode's
+    #: duration and not by what the model's rounds cost.
+    series: Series = field(default_factory=lambda: Series(interval_s=1.0))
+    #: Per round, not per sample: mean decision latency of the advisories
+    #: published in it. A property of a decision, so it is recorded where
+    #: decisions happen rather than on the sample grid.
     latency_s: list[float] = field(default_factory=list)
-    #: Rounds whose turn overran ``decision_s``. Nonzero means the sampling
-    #: grid has jitter in it and the spectral numbers are that much softer.
+    #: Rounds whose turn overran ``decision_s``. Since M4 this no longer says
+    #: anything about the sample grid -- see ``grid_uniform`` -- and instead says
+    #: what it looks like it says: the model missed its slot this many times.
     overruns: int = 0
     wall_clock_s: float = 0.0
     session_summary: dict[str, Any] = field(default_factory=dict)
     hosts_summary: dict[str, Any] = field(default_factory=dict)
 
+    # ------------------------------------------------------- the series, named
+
+    @property
+    def utilisation(self) -> dict[int, list[float]]:
+        """Interface -> total utilisation, background included. What an operator sees."""
+        return self.series.utilisation
+
+    @property
+    def advised_load(self) -> dict[int, list[float]]:
+        """Interface -> load from the advised populations alone, over capacity.
+
+        What the model caused rather than what happened, and therefore what the
+        detectors read. ADR 0010: the background resamples on a bucket comparable
+        to the decision cadence, so leaving it in the detector's series measures
+        the environment's noise as if it were the model's.
+        """
+        return self.series.advised_load
+
+    @property
+    def path_share(self) -> dict[tuple[str, str], list[float]]:
+        return self.series.path_share
+
+    @property
+    def deviation(self) -> list[float]:
+        return self.series.deviation
+
+    @property
+    def mean_cost_ms(self) -> list[float]:
+        return self.series.mean_cost_ms
+
     # ------------------------------------------------------------- detectors
+
+    def _band(self) -> dict[str, Any]:
+        """Warmup and band edge for this run's axis, in the series' own units.
+
+        The detectors take samples and cycles-per-sample; the milestone's numbers
+        are in rounds. One conversion, in one place, from the two rates this run
+        actually kept -- so a run sampled four times per round is measured over
+        the same span of *world* as one sampled once per round, rather than over
+        a quarter of it.
+        """
+        sample_s = self.sample_s or self.config.decision_s
+        cadence_s = self.cadence_s or self.config.decision_s
+        return {
+            "warmup": warmup_samples(sample_s, cadence_s),
+            "f_min": band_min(sample_s, cadence_s),
+        }
 
     def swing(self) -> float:
         """**The headline number.** Fast-band amplitude on the worst link.
@@ -156,7 +202,8 @@ class LoopResult:
         leaves twenty-three quiet links alone has still flapped a bottleneck,
         and averaging would hide it behind the quiet ones.
         """
-        return max((fast_swing(s) for s in self.advised_load.values()), default=0.0)
+        band = self._band()
+        return max((fast_swing(s, **band) for s in self.advised_load.values()), default=0.0)
 
     def share_swing(self) -> float:
         """The same amplitude on the realised split rather than on the link.
@@ -167,7 +214,8 @@ class LoopResult:
         nothing, if the paths it swaps between do not share a bottleneck --  and
         the reverse, since a scope may be shaken by the other ninety-nine.
         """
-        return max((fast_swing(s) for s in self.path_share.values()), default=0.0)
+        band = self._band()
+        return max((fast_swing(s, **band) for s in self.path_share.values()), default=0.0)
 
     def oscillation(self) -> float:
         """Spectral peak dominance on the worst link. Kept, but not the headline.
@@ -178,38 +226,50 @@ class LoopResult:
         rank them backwards. Believe it at ``scopes == 1``; read :meth:`swing`
         otherwise.
         """
-        return max((oscillation_index(s) for s in self.advised_load.values()), default=0.0)
+        band = self._band()
+        return max((oscillation_index(s, **band) for s in self.advised_load.values()), default=0.0)
 
     def share_oscillation(self) -> float:
-        return max((oscillation_index(s) for s in self.path_share.values()), default=0.0)
+        band = self._band()
+        return max((oscillation_index(s, **band) for s in self.path_share.values()), default=0.0)
 
     def swing_by_link(self) -> dict[int, float]:
-        return {i: fast_swing(s) for i, s in self.advised_load.items()}
+        band = self._band()
+        return {i: fast_swing(s, **band) for i, s in self.advised_load.items()}
 
     def period(self) -> float:
+        """Samples per cycle of the worst link's peak. Divide by ``sample_s`` for seconds."""
         worst = self._worst_link()
-        return dominant_period(self.advised_load[worst]) if worst is not None else float("inf")
+        if worst is None:
+            return float("inf")
+        return dominant_period(self.advised_load[worst], **self._band())
 
     def flapping(self) -> float:
         worst = self._worst_link()
-        return flap_rate(self.advised_load[worst]) if worst is not None else 0.0
+        if worst is None:
+            return 0.0
+        return flap_rate(self.advised_load[worst], warmup=self._band()["warmup"])
 
     def _worst_link(self) -> int | None:
         """The interface the headline number came from."""
         by_link = self.swing_by_link()
         return max(by_link, key=lambda k: by_link[k]) if by_link else None
 
-    def grid_uniform(self, *, tolerance: float = 0.01) -> bool:
+    def grid_uniform(self) -> bool:
         """Were the samples taken on an even grid, and so is the spectrum real?
 
         Every detector here assumes uniform sampling and none of them can tell
         when that is untrue -- the series is the right length and the numbers
-        look plausible either way. A round that overran ended when the model's
-        turn ended instead of on the grid, so a run with many of them has a
-        frequency axis that does not mean what it says. Carried on the report
-        card next to the numbers it invalidates.
+        look plausible either way. Carried on the report card next to the numbers
+        it would invalidate.
+
+        Since M4 this is a measurement rather than an inference. M3 answered it
+        by counting rounds that overran, because a round that overran was a
+        sample taken late; the sampler now takes its samples off the world's
+        clock, so an overrun costs the model a slot and costs the grid nothing,
+        and the two questions have come apart. Read ``overruns`` for the first.
         """
-        return self.overruns <= tolerance * max(self.config.cycles, 1)
+        return self.series.uniform()
 
     def mean_deviation(self) -> float:
         return float(np.mean(self.deviation)) if self.deviation else 0.0
@@ -225,6 +285,8 @@ class LoopResult:
             "scenario": self.scenario,
             "cycles": self.config.cycles,
             "decision_s": round(self.cadence_s, 1),
+            "sample_s": round(self.sample_s, 1),
+            "samples": len(self.series),
             "scopes": self.hosts_summary.get("scopes", 0),
             "hosts": self.hosts_summary.get("hosts", 0),
             "swing": round(self.swing(), 4),
@@ -238,6 +300,7 @@ class LoopResult:
             "mean_latency_s": round(float(np.mean(self.latency_s)), 4) if self.latency_s else 0.0,
             "overruns": self.overruns,
             "grid_uniform": self.grid_uniform(),
+            "grid_jitter_s": round(self.series.jitter_s(), 6),
             "calls": self.session_summary.get("calls", 0),
             "wall_clock_s": round(self.wall_clock_s, 3),
             "digest": self.session_summary.get("digest", ""),
@@ -303,9 +366,6 @@ def run_loop(
 
     result = LoopResult(model=session.label, scenario=scenario.name, config=cfg)
     tracked = _tracked_ifaces(world, indices, cfg.n_tracked)
-    result.utilisation = {int(i): [] for i in tracked}
-    result.advised_load = {int(i): [] for i in tracked}
-    result.path_share = {scope: [] for scope in scopes}
 
     model.reset(session.view(), seed=cfg.seed)
     # One telemetry subscription for the whole episode. The records are raw and
@@ -317,19 +377,48 @@ def run_loop(
     started = time.perf_counter()
     cadence = _calibrate(model, session, scopes, indices, cfg, handle)
     result.cadence_s = cadence
+    result.sample_s = cfg.sample_s if cfg.sample_s is not None else cadence
+    if result.sample_s > cadence + 1e-9:
+        # Nyquist, and it is not theoretical: measured at the smoke tier, sampling
+        # a 30 s cadence every 60 s dropped the greedy model's amplitude from 3.37
+        # to 2.00 and put its peak dominance *below* the calm model's -- the same
+        # inversion ADR 0010 originally reported and withdrew, reproduced on
+        # purpose by undersampling. A model cannot change its advice faster than
+        # once a round, so sampling faster than the cadence only ever adds detail;
+        # sampling slower aliases the pathology into the slow band and hides it.
+        raise ValueError(
+            f"sample_s={result.sample_s}s is slower than the {cadence}s decision "
+            "cadence, which aliases exactly what the detectors are looking for; "
+            "sample at or faster than the cadence"
+        )
 
-    deadline = session.now + cadence
-    for cycle in range(cfg.cycles):
-        published = len(session.advisories)
-        _turn(model, session, scopes, indices, cfg, cycle, handle)
-        if session.now < deadline:
-            session.advance(deadline - session.now)
-        else:
-            result.overruns += 1
-        _sample(result, world, session, tracked, scopes, indices, published)
-        deadline += cadence
-        if on_cycle is not None:
-            on_cycle(cycle + 1, cfg.cycles)
+    sampler = Sampler(
+        world,
+        interval_s=result.sample_s,
+        tracked=tracked,
+        scopes=list(scopes),
+        indices=indices,
+    )
+    result.series = sampler.series
+    # Attached after calibration, so the throwaway rounds are not in the series,
+    # and the grid is anchored where the episode starts.
+    with sampler:
+        deadline = session.now + cadence
+        for cycle in range(cfg.cycles):
+            published = len(session.advisories)
+            _turn(model, session, scopes, indices, cfg, cycle, handle)
+            if session.now < deadline:
+                session.advance(deadline - session.now)
+            else:
+                result.overruns += 1
+            # The samples were taken by the tap while the above ran. All that is
+            # left per round is the latency of the advice this round published,
+            # which is a property of the decision and not of the world.
+            fresh = [a["latency_s"] for a in session.advisories[published:]]
+            result.latency_s.append(float(np.mean(fresh)) if fresh else 0.0)
+            deadline += cadence
+            if on_cycle is not None:
+                on_cycle(cycle + 1, cfg.cycles)
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
     result.hosts_summary = world.hosts.summary()
@@ -361,12 +450,13 @@ def _calibrate(
 ) -> float:
     """Find a cadence the episode can actually keep, by running a few rounds.
 
-    Found at the dev tier with forty scopes, where every one of 240 rounds
-    overran a 30 s cadence: probes are charged per scope, so the cost of a round
-    grows with the number of scopes, and the world then advanced by whatever the
-    turns happened to cost. Nothing about that looks wrong in the output -- the
-    series is the right length and the numbers are plausible -- but it is not
-    uniformly sampled, and every detector here assumes it is.
+    Off by default since M4. It was introduced to protect the sample grid at the
+    dev tier, where every one of 240 rounds overran a 30 s cadence because probes
+    are charged per scope -- and it only half worked, because a model whose rounds
+    get more expensive as the episode runs outgrows a cadence fixed from its
+    first three. The grid is now the sampler's problem (ADR 0011) and this is
+    back to being what it reads like: a way to ask what the same model does at a
+    cadence it can keep, as a controlled change rather than a rerun.
 
     Measuring beats predicting: the cost depends on the model's own diet, on how
     the rate limiter falls out across border routers, and on which tools the
@@ -505,42 +595,6 @@ def _tracked_ifaces(world: Substrate, indices: Sequence[tuple[int, int]], n: int
             score[iface] = score.get(iface, 0.0) + p * (1.0 - p)
     ranked = sorted(score, key=lambda i: (-score[i], i))
     return ranked[:n]
-
-
-def _sample(
-    result: LoopResult,
-    world: Substrate,
-    session: Session,
-    tracked: Sequence[int],
-    scopes: Sequence[tuple[str, str]],
-    indices: Sequence[tuple[int, int]],
-    published: int,
-) -> None:
-    utilisation = world.links.utilisation()
-    capacity = world.links.usable_capacity_mbps()
-    advised = world.links.demand_mbps
-    for iface in tracked:
-        result.utilisation[int(iface)].append(float(utilisation[iface]))
-        result.advised_load[int(iface)].append(float(advised[iface] / capacity[iface]))
-
-    deviations: list[float] = []
-    costs: list[float] = []
-    cost = world.links.cost()
-    for scope, (a, b) in zip(scopes, indices, strict=True):
-        state = world.hosts.scope(a, b)
-        if state is None or state.n_paths == 0 or state.counts.sum() <= 0:
-            result.path_share[scope].append(0.0)
-            continue
-        shares = state.counts / int(state.counts.sum())
-        result.path_share[scope].append(float(shares[0]))
-        deviations.append(state.deviation())
-        if state.ifaces.size:
-            per_path = np.bincount(state.owner, weights=cost[state.ifaces], minlength=state.n_paths)
-            costs.append(float((per_path * shares).sum()))
-    result.deviation.append(max(deviations, default=0.0))
-    result.mean_cost_ms.append(float(np.mean(costs)) if costs else float("nan"))
-    fresh = [a["latency_s"] for a in session.advisories[published:]]
-    result.latency_s.append(float(np.mean(fresh)) if fresh else 0.0)
 
 
 def compare(results: Sequence[LoopResult]) -> list[Mapping[str, Any]]:

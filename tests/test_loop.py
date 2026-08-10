@@ -109,7 +109,13 @@ def test_peak_dominance_does_not_separate_the_two_models_at_this_size(runs) -> N
 
 
 def test_every_series_has_one_sample_per_decision_round(runs) -> None:
-    """The FFT assumes a uniform grid. If this drifts, the detectors lie."""
+    """At the default rate and a cadence these rounds fit, one sample per round.
+
+    Not a property of the loop any more -- the sampler runs off the world's clock
+    and would keep sampling if the rounds took an hour -- but it is what the
+    default ``sample_s`` means, and it is what keeps every threshold measured
+    before M4 comparable with everything measured after it.
+    """
     for result in runs.values():
         assert len(result.mean_cost_ms) == CYCLES
         for series in result.advised_load.values():
@@ -131,34 +137,50 @@ def test_a_turn_that_overruns_its_round_is_counted_not_hidden(runs) -> None:
         assert "overruns" in result.report()
 
 
-def test_the_cadence_widens_to_fit_a_round_it_cannot_otherwise_keep(scenario) -> None:
-    """Found at the dev tier with forty scopes: every round overran.
+def test_the_grid_survives_rounds_that_do_not_fit_the_cadence(scenario) -> None:
+    """**M4's first fix, and M3's known limitation, as a test.**
 
-    Probes are charged per scope, so the cost of a round grows with the number
-    of scopes, and a 30 s cadence that is generous for eight of them is not
-    survivable for forty. The samples then land wherever the turns happened to
-    finish and the FFT is reading a series that was never uniformly sampled --
-    which is worse than a slow run, because nothing about it looks wrong.
+    Twenty-four scopes at a 30 s cadence: probes are charged per scope, so every
+    round overruns, and under M3's sampling every sample landed wherever the
+    turns happened to finish. The series was the right length and the numbers
+    were plausible, and the FFT was being told the grid was uniform when it was
+    not -- the one kind of wrong output that nothing downstream can detect.
+
+    The samples now come off the world's clock (ADR 0011), so the grid is exact
+    whatever the rounds cost. What changes with slow rounds is the *number* of
+    samples, which is the honest consequence: an episode that took 968 simulated
+    seconds is 32 samples of a 30 s grid, not 12.
     """
     many = busiest_scopes(scenario.build(), 24)
     result = run_loop(
         REFERENCE_MODELS["minrtt"](), scenario, many, config=LoopConfig(cycles=12, seed=7)
     )
-    assert result.overruns == 0
-    assert result.cadence_s > LoopConfig().decision_s
+    assert result.overruns == 12, "the premise: at this width no round fits 30 s"
+    assert result.grid_uniform(), "the fix: the grid does not depend on the rounds"
+    assert result.series.jitter_s() == 0.0
+    assert result.series.skipped == 0
+    assert len(result.series) > 12, "a longer episode is more samples, not later ones"
+    assert result.series.times[0] == 30.0
 
 
-def test_the_widening_can_be_turned_off_and_then_the_rounds_do_overrun(scenario) -> None:
-    """The knob has to change something, or it is documentation pretending to be code."""
+def test_the_cadence_can_still_be_widened_to_fit_a_round(scenario) -> None:
+    """The knob has to change something, or it is documentation pretending to be code.
+
+    Kept, and no longer the default: widening the cadence in response to how slow
+    the model is changes the scenario to suit the model, which is a finding
+    hidden rather than reported. What it is good for is asking what the same
+    model does when it is given rounds it can keep, as a controlled change.
+    """
     many = busiest_scopes(scenario.build(), 24)
     result = run_loop(
         REFERENCE_MODELS["minrtt"](),
         scenario,
         many,
-        config=LoopConfig(cycles=12, seed=7, adaptive_cadence=False),
+        config=LoopConfig(cycles=12, seed=7, adaptive_cadence=True),
     )
-    assert result.overruns > 0
-    assert result.cadence_s == LoopConfig().decision_s
+    assert result.overruns == 0
+    assert result.cadence_s > LoopConfig().decision_s
+    assert result.grid_uniform()
 
 
 def test_a_cadence_that_already_fits_is_left_alone(runs, config) -> None:
@@ -167,24 +189,67 @@ def test_a_cadence_that_already_fits_is_left_alone(runs, config) -> None:
         assert result.grid_uniform()
 
 
-def test_a_run_that_could_not_keep_its_grid_says_so_on_the_report_card(scenario) -> None:
-    """Measured at the dev tier with forty scopes: calibration is not always enough.
+def test_sampling_faster_than_the_cadence_does_not_change_what_is_measured(
+    scenario, scopes
+) -> None:
+    """The band is defined in decision rounds, so the sample rate cancels out.
 
-    A model whose rounds get more expensive as the episode runs -- the
-    stochastic one does, because it lights up far more paths and telemetry is
-    charged per record -- outgrows a cadence fixed from its first few rounds.
-    The spectrum of that run is not meaningful, and the one thing that must not
-    happen is for it to be quoted as though it were.
+    Five samples per round is five times the series over the same span of world,
+    with the band edge and the warmup converted to match. The amplitude is a
+    physical quantity -- points of capacity moved per round -- so it must not
+    depend on how often somebody wrote it down. Loosely, because a finer grid
+    genuinely sees within-round movement that a coarser one averages over; what
+    would be wrong is a factor of two.
     """
-    many = busiest_scopes(scenario.build(), 24)
-    result = run_loop(
-        REFERENCE_MODELS["minrtt"](),
-        scenario,
-        many,
-        config=LoopConfig(cycles=12, seed=7, adaptive_cadence=False),
+    coarse, fine = (
+        run_loop(
+            REFERENCE_MODELS["minrtt"](),
+            scenario,
+            scopes,
+            config=LoopConfig(cycles=60, n_hosts=200, seed=7, sample_s=sample_s),
+        )
+        for sample_s in (None, 6.0)
     )
-    assert not result.grid_uniform()
-    assert result.report()["grid_uniform"] is False
+    assert len(fine.series) == pytest.approx(5 * len(coarse.series), rel=0.05)
+    assert fine.sample_s == 6.0
+    assert fine.grid_uniform()
+    assert fine.swing() == pytest.approx(coarse.swing(), rel=0.35), (
+        f"amplitude moved from {coarse.swing():.3f} to {fine.swing():.3f} on a change "
+        "of sample rate alone"
+    )
+
+
+def test_sampling_slower_than_the_cadence_is_refused(scenario, scopes) -> None:
+    """Nyquist, and measured rather than assumed.
+
+    Sampling a 30 s cadence every 60 s took the greedy model's amplitude from
+    3.37 to 2.00 and put its peak dominance *below* the stochastic model's --
+    which is the inversion ADR 0010 first reported and then withdrew, reproduced
+    on purpose. A run like that is not a coarser measurement of the pathology, it
+    is a measurement of something else, so it is refused rather than annotated.
+    """
+    with pytest.raises(ValueError, match="aliases"):
+        run_loop(
+            REFERENCE_MODELS["minrtt"](),
+            scenario,
+            scopes,
+            config=LoopConfig(cycles=4, seed=7, decision_s=30.0, sample_s=60.0),
+        )
+
+
+def test_a_sample_rate_off_the_world_grid_is_refused(scenario, scopes) -> None:
+    """Half a tick is a grid point that never coincides with a tick.
+
+    Silently, and the samples then drift by up to a tick each. Better to refuse
+    the run than to produce a series whose x axis is a fiction.
+    """
+    with pytest.raises(ValueError, match="whole multiple"):
+        run_loop(
+            REFERENCE_MODELS["minrtt"](),
+            scenario,
+            scopes,
+            config=LoopConfig(cycles=4, seed=7, sample_s=0.5),
+        )
 
 
 # --------------------------------------------------------------------------

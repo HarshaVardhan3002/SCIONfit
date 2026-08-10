@@ -26,7 +26,7 @@ from typing import Any
 
 from scionarena.core.scenario import Scenario
 from scionarena.exposure.loop import LoopConfig, LoopResult, busiest_scopes, run_loop
-from scionarena.instrument.report import render_html, report_card
+from scionarena.instrument.report import render_html, report_card, verdict_state
 from scionarena.reference.models import REFERENCE_MODELS
 
 __all__ = ["main", "run_demo", "sections", "verdicts"]
@@ -37,15 +37,12 @@ __all__ = ["main", "run_demo", "sections", "verdicts"]
 #: number fitted to whichever tier it was first run at.
 MIN_SWING_RATIO = 4.0
 MIN_COST_RATIO = 2.0
-#: Rounds allowed to finish late before the sample grid stops being a grid. Not
-#: zero: the cadence is calibrated from a few rounds and a probe that waits on a
-#: rate limit can still push one round past it. One in a hundred is jitter; a
-#: tenth of them is a series the detectors should not be run over at all.
-MAX_OVERRUN_FRACTION = 0.01
 
 CARD_COLUMNS = (
     "model",
     "decision_s",
+    "sample_s",
+    "samples",
     "swing",
     "share_swing",
     "oscillation_index",
@@ -147,11 +144,28 @@ def verdicts(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
             "ok": old > 0.5,
         },
         {
-            "criterion": f"samples sit on the decision grid (< {MAX_OVERRUN_FRACTION:.0%} late)",
+            # M3 answered this by counting rounds that finished late, because a
+            # late round was a sample taken late. Since M4 the samples come off
+            # the world's clock, so lateness costs the model its slot and costs
+            # the grid nothing, and the criterion asks the sampler directly.
+            # Overruns are still reported below -- as what they are, which is how
+            # often the model missed its slot.
+            "criterion": "samples sit on an exact grid, so the spectra mean something",
             "measured": ", ".join(
-                f"{r.overruns}/{r.config.cycles} at {r.cadence_s:g}s" for r in results
+                f"{len(r.series)} at {r.sample_s:g}s, jitter {r.series.jitter_s():.3g}s"
+                for r in results
             ),
-            "ok": all(r.overruns <= MAX_OVERRUN_FRACTION * r.config.cycles for r in results),
+            "ok": all(r.grid_uniform() for r in results),
+        },
+        {
+            "criterion": "rounds the model finished inside its decision slot",
+            "measured": ", ".join(
+                f"{r.config.cycles - r.overruns}/{r.config.cycles} at {r.cadence_s:g}s"
+                for r in results
+            ),
+            # Reported, not gated. A model too slow for its cadence is a finding
+            # about the model, and the run that shows it is a valid run.
+            "ok": None,
         },
     ]
     if len(results) > 2:
@@ -172,18 +186,24 @@ def sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
     """The figure: the same link, and the same scope, under each model."""
     link = _shared_link(results)
     scope = _shared_scope(results)
+    # Every run in a comparison shares the scenario's step grid and cadence, so one
+    # label is honest for all of them; say the interval rather than "round", which
+    # stopped being the x axis when the sampler moved onto the world's clock.
+    axis = f"sample ({results[0].sample_s:g} s apart)"
     sections: list[dict[str, Any]] = []
     if link is not None:
         sections.append(
             {
                 "title": f"Offered load on interface {link}, from the advised populations",
                 "note": "One line per model on <em>the same interface of the same "
-                "topology</em>, sampled once per decision round. Above 1.0 the "
+                "topology</em>, sampled on the world's clock at the interval on the "
+                "report card. Above 1.0 the "
                 "populations are asking for more than the link has. Background "
                 "traffic is excluded here so that what is left is what the model "
                 "caused.",
                 "series": {r.model: r.advised_load.get(link, []) for r in results},
                 "y_label": "offered / capacity",
+                "x_label": axis,
             }
         )
         sections.append(
@@ -192,6 +212,7 @@ def sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
                 "note": "What an operator's own graph would show.",
                 "series": {r.model: r.utilisation.get(link, []) for r in results},
                 "y_label": "utilisation",
+                "x_label": axis,
                 "y_max": 1.0,
             }
         )
@@ -204,6 +225,7 @@ def sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
                 "is a population being thrown back and forth.",
                 "series": {r.model: r.path_share.get(scope, []) for r in results},
                 "y_label": "share of scope",
+                "x_label": axis,
                 "y_max": 1.0,
             }
         )
@@ -214,6 +236,7 @@ def sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
             "an aesthetic complaint: it shows up here.",
             "series": {r.model: r.mean_cost_ms for r in results},
             "y_label": "ms",
+            "x_label": axis,
         }
     )
     return sections
@@ -298,7 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     print(report_card(rows, columns=CARD_COLUMNS))
     print()
     for check in checks:
-        print(f"[{'PASS' if check['ok'] else 'FAIL'}] {check['criterion']}: {check['measured']}")
+        tag = {"pass": "PASS", "fail": "FAIL", "noted": "----"}[verdict_state(check["ok"])[0]]
+        print(f"[{tag}] {check['criterion']}: {check['measured']}")
     print(f"\nwrote {out / 'report.html'} in {meta['wall_clock_s']}s")
     return 0 if all(c["ok"] for c in checks[:3]) else 1
 

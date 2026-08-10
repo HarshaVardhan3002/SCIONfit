@@ -1,6 +1,9 @@
 # 0010 — Measuring oscillation by amplitude, not periodicity
 
-Status: accepted, revised in M3 (see "Revision", which corrects the evidence below)
+Status: accepted, revised in M3 (see "Revision", which corrects the evidence below),
+and the revision's own mechanism superseded in M4 by
+[0011](0011-sampling-off-the-worlds-clock.md) — read the note at the end before
+quoting the revision table
 Date: M3
 Supersedes nothing. Amends the measurement half of [0009](0009-closing-the-loop-hosts-delay-and-realised-load.md).
 
@@ -182,3 +185,28 @@ here. Add to it: validate on a series you have checked is uniformly sampled. The
 detectors cannot see that they are being lied to about their own x axis, and
 neither could the report card — the output looked entirely plausible for as long
 as the bug existed.
+
+---
+
+## Note — M4, after ADR 0011
+
+The revision above fixed the grid by widening `decision_s` per row until every
+round fit it. M4 fixes it by taking samples off the world's clock instead, so the
+cadence is held at 30 s and rounds are allowed to overrun. Re-measuring the sweep
+that way (table in [0011](0011-sampling-off-the-worlds-clock.md), and in
+`docs/milestones/M3.md` beside the original) reproduces the amplitude column to
+within 0.1 and the ratios to within 0.5x, and does **not** reproduce the dominance
+column: dominance falls from 0.257 to 0.079 across the same sweep instead of
+climbing from 0.33 to 0.85.
+
+The climb was mostly an artefact of the fix. Widening the cadence widened the
+sample interval with it — to 121 s at 24 scopes — and coarser sampling folds the
+same power into fewer bins, which raises dominance for any series regardless of
+the model. So the revision's sentence "its dominance climbs from 0.33 to 0.85"
+should be read as a statement about sample rate, not about scale.
+
+Decision 5 is what survives, with more support than it had: the ratio between two
+models on one scenario reproduced across both mechanisms, and absolute dominance
+has now been seen to move in *either* direction depending on a sampling choice the
+model has no part in. The 0.5 threshold is not reached at any scale on a held
+cadence.

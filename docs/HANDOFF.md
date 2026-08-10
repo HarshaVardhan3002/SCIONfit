@@ -287,14 +287,20 @@ here is the X" is.
 Ten milestones. M0–M4 are strictly sequential. M5/M6/M7 parallelise after M4. Full specs
 in `docs/milestones/`.
 
-**Landed: M0 through M3.** The substrate beacons, composes paths and carries load at the
-realistic tier; models reach it only through costed, rate-limited tools; and the loop is
-closed. `scionarena demo` and `scionarena ui` produce the M3 result in one command. Read
-`docs/milestones/M3.md` before M4 -- in particular its "known limitation", which is the
-first thing M4 should fix: series are sampled once per decision round, and a model whose
-rounds get more expensive as it runs therefore hands the detectors a grid that is not
-uniform. Sampling on the world's own clock changes what a series is, so it belongs at the
-start of the instrumentation milestone rather than bolted onto the end of this one.
+**Landed: M0 through M3. M4 in progress.** The substrate beacons, composes paths and
+carries load at the realistic tier; models reach it only through costed, rate-limited
+tools; and the loop is closed. `scionarena demo` and `scionarena ui` produce the M3 result
+in one command.
+
+M3's "known limitation" -- series sampled once per decision round, so a model whose rounds
+get more expensive hands the detectors a grid that is not uniform -- is closed.
+`instrument/sampler.py` takes samples from a substrate tap on multiples of absolute
+simulated time, so an overrunning round costs the model its slot and costs the grid
+nothing, and the fast band is defined in decision rounds rather than in cycles per sample
+so that the rate can change without the measurement changing. [ADR
+0011](adr/0011-sampling-off-the-worlds-clock.md) has the decision and the sweeps; one of
+them does not reproduce M3's dominance column and says so. The rest of M4 -- trace,
+metric registry, the remaining detectors, the viewer -- is still open.
 
 Two things measured at the realistic tier that the next milestone inherits. First, an
 episode is bounded by memory rather than by the clock: 257 MiB per decision round for the

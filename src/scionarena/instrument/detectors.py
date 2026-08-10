@@ -8,14 +8,18 @@ so that a detector can be run over a saved trace as easily as over a live run.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
 from numpy.typing import NDArray
 
 __all__ = [
+    "FAST_BAND_MAX_ROUNDS",
     "FAST_BAND_MIN",
     "WARMUP",
+    "band_min",
+    "warmup_samples",
     "oscillation_index",
     "fast_swing",
     "spectrum",
@@ -37,10 +41,51 @@ __all__ = [
 #: series, and a detector that cannot tell them apart should not report either.
 FAST_BAND_MIN: float = 0.08
 
-#: Samples discarded before measuring. The loop starts from a uniform split and
-#: takes a few steps to reach whatever it is going to do; scoring the transient
-#: would credit every model with the same initial swing.
+#: The same edge in units that survive a change of sample rate: a cycle slower
+#: than this many decision rounds is not fast. ``FAST_BAND_MIN`` is this
+#: reciprocal, and holds only for a series sampled once per round, which is what
+#: M3 did and M4 no longer does -- see :func:`band_min` and ADR 0011.
+#:
+#: Twelve and a half rounds is where the edge has always been; what is new is
+#: saying so in rounds. The number is bounded on both sides rather than chosen:
+#: below about four rounds the band would exclude the slow herding a model can
+#: sustain over several turns, and above about fifty it would start admitting
+#: the diurnal cycle a model is *supposed* to follow. Anywhere in between
+#: reports the same ranking, which is the test for a constant that is not tuned.
+FAST_BAND_MAX_ROUNDS: float = 12.5
+
+#: Samples discarded before measuring, for a series sampled once per decision
+#: round. The loop starts from a uniform split and takes a few rounds to reach
+#: whatever it is going to do; scoring the transient would credit every model
+#: with the same initial swing. Off-cadence series convert with
+#: :func:`warmup_samples`.
 WARMUP: int = 40
+
+
+def band_min(sample_s: float, decision_s: float) -> float:
+    """The fast-band edge in cycles per sample, for a series sampled at ``sample_s``.
+
+    Oscillation is a property of a control loop relative to *its own cadence* --
+    the pathology is "flaps every other decision", not "flaps every 60 seconds"
+    -- so the band is defined in rounds and converted to the series' axis here.
+    Sample once per round and this returns ``FAST_BAND_MIN`` exactly, which is
+    what keeps the M3 numbers comparable with everything measured after it.
+
+    Sampling faster than the cadence widens the band in cycles-per-sample terms
+    and narrows nothing: the fastest thing a model can do is still change its
+    advice once per round, so no real signal lives above that, and the extra
+    bins hold whatever the world was doing between the model's turns.
+    """
+    if not (sample_s > 0.0 and decision_s > 0.0):
+        raise ValueError(f"both rates must be positive, got {sample_s=} {decision_s=}")
+    return sample_s / (FAST_BAND_MAX_ROUNDS * decision_s)
+
+
+def warmup_samples(sample_s: float, decision_s: float, *, rounds: int = WARMUP) -> int:
+    """How many samples cover the opening ``rounds`` of transient."""
+    if not (sample_s > 0.0 and decision_s > 0.0):
+        raise ValueError(f"both rates must be positive, got {sample_s=} {decision_s=}")
+    return int(math.ceil(rounds * decision_s / sample_s))
 
 
 def spectrum(

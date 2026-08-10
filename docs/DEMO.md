@@ -65,20 +65,33 @@ the load moves fast, in the units of the series. The other is **peak dominance**
 measure the proposal published — how *periodic* the movement is — and the milestone was
 originally written against it: greedy above 0.5, stochastic below 0.15.
 
-It does not travel. Sweeping the number of contending scopes from 4 to 24 on the same
-tier and seed, the greedy model's dominance climbs from 0.33 to 0.85, straight through
-the 0.5 line, while its amplitude stays between 3.0 and 4.5 and the ratio between the two
-models never drops below 6x. Run length does the same thing: 100 rounds gives 0.375
-against 0.249, 240 rounds gives 0.330 against 0.076. A threshold on dominance is a
-threshold on the shape of your experiment as much as on the model.
+It does not travel. Sweeping the number of contending scopes from 4 to 24 on the same tier
+and seed, the amplitude ratio between the two models never drops below 6x — and dominance
+goes wherever the experiment's shape sends it. Measured with the decision cadence widened
+per row so that every round fits it, the greedy model's dominance *climbs* from 0.33 to
+0.85, straight through the 0.5 line. Measured on a held 30 s cadence, the same sweep has it
+*falling* from 0.257 to 0.079, and at 24 scopes the two models are 0.079 against 0.067,
+which is no separation at all. Run length moves it too: at 4 scopes, 100 rounds gives 0.375
+against 0.249 and 240 rounds gives 0.330 against 0.076.
+
+The reason is worth saying out loud, because it is the strongest version of the point.
+Widening the cadence widens the sample interval with it, and coarse sampling folds the same
+power into fewer bins, which raises dominance for *any* series. Decimating one run's grid
+from 30 s to 120 s takes the greedy model from 0.297 to 0.554 and the stochastic one from
+0.206 to 0.459 — the calm model crosses most of the way to the 0.5 threshold without
+changing its behaviour at all. A threshold on dominance is a threshold on your sampling
+choices as much as on the model.
 
 So the criterion was restated as a ratio between two models on one scenario, and the old
-number was kept on the card rather than deleted. `docs/adr/0010-...` has the reasoning,
-the measurements and the rejected alternatives — including a revision that withdraws a
-claim its own first draft made, once a sampling bug was found that had produced it.
+number was kept on the card rather than deleted. `docs/adr/0010-...` has the reasoning, the
+measurements and the rejected alternatives — including a revision that withdraws a claim
+its own first draft made, and a note at the end recording that the revision's own headline
+number did not survive being measured on a fixed grid either. `docs/adr/0011-...` is the
+grid.
 
 That is the thing worth pointing at: the criterion written down before the data was not
-quietly rewritten after it, and neither was the ADR.
+quietly rewritten after it, and neither was the ADR. Two of its numbers have been withdrawn
+in public and both withdrawals are still readable.
 
 ## If there is more time
 

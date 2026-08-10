@@ -18,7 +18,14 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-__all__ = ["CSS", "svg_lines", "report_card", "render_body", "render_html"]
+__all__ = [
+    "CSS",
+    "svg_lines",
+    "report_card",
+    "render_body",
+    "render_html",
+    "verdict_state",
+]
 
 #: Enough to tell four or five series apart on a projector, in that order.
 PALETTE = ("#d1495b", "#0f4c81", "#28a745", "#f2a541", "#7768ae", "#3f8f8b")
@@ -34,7 +41,7 @@ th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #e3e8ee;
 th:first-child, td:first-child { text-align: left; }
 th { font-weight: 600; color: #5b6b7c; border-bottom: 2px solid #cfd8e3; }
 tr.headline td { background: #fdf3f4; font-weight: 600; }
-td.pass { color: #1a7f37; } td.fail { color: #b42318; }
+td.pass { color: #1a7f37; } td.fail { color: #b42318; } td.noted { color: #5b6b7c; }
 .key { display: inline-block; margin: 4px 14px 4px 0; font-size: 13px; }
 .key i { display: inline-block; width: 22px; height: 3px; vertical-align: middle;
          margin-right: 6px; }
@@ -50,7 +57,7 @@ def svg_lines(
     width: int = 1040,
     height: int = 260,
     y_label: str = "",
-    x_label: str = "decision round",
+    x_label: str = "sample",
     y_max: float | None = None,
 ) -> str:
     """One chart, several series, no dependencies.
@@ -132,6 +139,19 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
+def verdict_state(ok: bool | None) -> tuple[str, str]:
+    """CSS class and word for a verdict. ``None`` is neither pass nor fail.
+
+    One function so that the page, the JSON and the terminal cannot disagree
+    about whether something passed -- three renderers each deciding for
+    themselves is how a demo ends up claiming a pass in one place and a failure
+    in another for the same number.
+    """
+    if ok is None:
+        return "noted", "noted"
+    return ("pass", "met") if ok else ("fail", "NOT met")
+
+
 def render_body(
     sections: Sequence[Mapping[str, Any]],
     rows: Sequence[Mapping[str, Any]],
@@ -141,10 +161,16 @@ def render_body(
 ) -> str:
     """Everything below the title, as a fragment.
 
-    ``sections`` are ``{"title", "note", "series", "y_label", "y_max"}``.
+    ``sections`` are ``{"title", "note", "series", "x_label", "y_label", "y_max"}``.
     ``verdicts`` are ``{"criterion", "measured", "ok"}`` and are rendered first,
     because a demonstration that makes the reader hunt for whether it passed is
     a demonstration that is hiding something.
+
+    ``ok`` of ``None`` renders as *noted* rather than as a failure. It is for a
+    number that belongs on the card but is nobody's pass mark -- how often the
+    model missed its decision slot, say, which is a finding about the model and
+    not a defect in the run. Rendering that as ``fail`` would make the demo look
+    broken; leaving it out would make the demo look better than it is.
 
     Split out from :func:`render_html` so that the saved file and the live UI
     are the same rendering rather than two that drift apart.
@@ -154,11 +180,11 @@ def render_body(
         out.append("<h2>Acceptance criteria</h2><table><tr><th>criterion</th>")
         out.append("<th>measured</th><th>verdict</th></tr>")
         for v in verdicts:
-            state = "pass" if v.get("ok") else "fail"
+            state, word = verdict_state(v.get("ok"))
             out.append(
                 f"<tr><td>{html.escape(str(v['criterion']))}</td>"
                 f"<td>{html.escape(_fmt(v.get('measured')))}</td>"
-                f"<td class='{state}'>{'met' if v.get('ok') else 'NOT met'}</td></tr>"
+                f"<td class='{state}'>{word}</td></tr>"
             )
         out.append("</table>")
 
@@ -168,13 +194,13 @@ def render_body(
         if section.get("note"):
             out.append(f"<div class='note'>{section['note']}</div>")
         out.append(_key(list(series)))
-        out.append(
-            svg_lines(
-                series,
-                y_label=str(section.get("y_label", "")),
-                y_max=section.get("y_max"),
-            )
-        )
+        chart: dict[str, Any] = {
+            "y_label": str(section.get("y_label", "")),
+            "y_max": section.get("y_max"),
+        }
+        if section.get("x_label"):
+            chart["x_label"] = str(section["x_label"])
+        out.append(svg_lines(series, **chart))
 
     if rows:
         out.append("<h2>Report card</h2><table><tr>")

@@ -1,0 +1,34 @@
+...default (per round)
+...3 s
+...6 s
+...10 s
+...15 s
+...30 s
+
+| sample_s | samples | grid uniform | amplitude, greedy | amplitude, stochastic | ratio | dominance, greedy | dominance, stochastic |
+|---|---|---|---|---|---|---|---|
+| default (per round) | 240 | yes | 3.300 | 0.546 | 6.05x | 0.297 | 0.206 |
+| 3 s | 2400 | yes | 3.467 | 0.546 | 6.35x | 0.217 | 0.137 |
+| 6 s | 1200 | yes | 3.435 | 0.553 | 6.22x | 0.216 | 0.141 |
+| 10 s | 720 | yes | 3.337 | 0.548 | 6.09x | 0.215 | 0.122 |
+| 15 s | 480 | yes | 3.312 | 0.542 | 6.11x | 0.222 | 0.152 |
+| 30 s | 240 | yes | 3.300 | 0.546 | 6.05x | 0.297 | 0.206 |
+
+| effective rate | samples | amplitude, greedy | amplitude, stochastic | ratio | dominance, greedy | dominance, stochastic |
+|---|---|---|---|---|---|---|
+| 30 s (kept) | 240 | 3.300 | 0.546 | 6.05x | 0.297 | 0.206 |
+| 60 s (decimated) | 120 | 2.791 | 0.509 | 5.48x | 0.357 | 0.227 |
+| 120 s (decimated) | 60 | 1.613 | 0.341 | 4.72x | 0.554 | 0.459 |
+...4 scopes
+...8 scopes
+...16 scopes
+...24 scopes
+
+| scopes | cadence | overruns | amplitude, greedy | amplitude, stochastic | ratio | dominance, greedy | dominance, stochastic | grid uniform |
+|---|---|---|---|---|---|---|---|---|
+| 4 | 30 s | 0/240 | 3.37 | 0.33 | 10.3x | 0.257 | 0.081 | yes |
+| 8 | 30 s | 2/240 | 3.30 | 0.55 | 6.0x | 0.297 | 0.206 | yes |
+| 16 | 30 s | 240/240 | 2.82 | 0.26 | 10.8x | 0.103 | 0.067 | yes |
+| 24 | 30 s | 240/240 | 4.30 | 0.22 | 19.2x | 0.079 | 0.067 | yes |
+
+24 scopes, 12 rounds, held cadence: overruns 12/12, 870 s of world time, mean round 72.5 s, 29 samples, gaps 30-30 s, jitter 0 s, skipped 0, uniform True
