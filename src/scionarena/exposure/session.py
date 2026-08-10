@@ -28,7 +28,7 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from ..core.clock import Stopwatch
 from ..core.scenario import Scenario, Substrate
@@ -168,6 +168,7 @@ class Session:
         registry: Mapping[str, ToolSpec] | None = None,
         charge_real_time: bool = False,
         stopwatch: Stopwatch | None = None,
+        extra_latency_s: float = 0.0,
         label: str = "session",
     ) -> None:
         self._world = world
@@ -184,6 +185,10 @@ class Session:
         self.deadline_s: float | None = None
         self.charge_real_time = charge_real_time
         self.stopwatch = stopwatch if stopwatch is not None else Stopwatch()
+        #: Added to every advisory's decision latency. A scenario knob for
+        #: "what if the model were slower", which is how the M3 criterion about
+        #: a slow model being measurably worse is run as a controlled change.
+        self.extra_latency_s = extra_latency_s
 
         self._rng = random.Random(seed)
         self._seq = 0
@@ -195,9 +200,12 @@ class Session:
         # --- what the substrate is asked about on each step -------------------
         self._infos: dict[str, PathInfo] = {}
         self._scopes: dict[tuple[int, int], frozenset[str]] = {}
-        self._traffic: dict[str, float] = {}  # path_id -> advisory weight
+        self._traffic: dict[str, float] = {}  # path_id -> realised share
         self._probed: set[str] = set()
+        self._telemetry_tick = -1
         self._epoch = world.segments.epoch
+        # --- decision latency (ADR 0009) ---------------------------------------
+        self._turn_start_s = world.now
 
     # ------------------------------------------------------------------ basics
 
@@ -395,6 +403,29 @@ class Session:
     def think(self, tokens: int = 0) -> bool:
         """Charge the optional compute budget. False means it has run out."""
         return self.budget.spend_tokens(tokens)
+
+    # --------------------------------------------------- decision latency
+
+    def begin_turn(self) -> None:
+        """Mark the start of one decision. A driver calls this; a model may.
+
+        Everything the model spends between here and publishing -- every probe,
+        every query, every second it sat thinking -- becomes the delay before
+        its advice reaches the hosts. That is the whole of invariant 3: the
+        model is not charged a penalty for being slow, it is simply applied
+        late, against whatever the network did meanwhile.
+
+        Logged, and free. It has to be logged because it changes when an
+        advisory lands, and a log that replays to a different world is not a
+        log of what happened.
+        """
+        self._turn_start_s = self.now
+        self._record("turn", self.now, "turn", {}, True, "", Cost(), 0)
+
+    @property
+    def decision_latency_s(self) -> float:
+        """Simulated seconds since this turn began, plus any injected latency."""
+        return max(0.0, self.now - self._turn_start_s) + self.extra_latency_s
 
     # ------------------------------------------------- ToolContext: the world
 
@@ -611,20 +642,48 @@ class Session:
             if total > 0
             else dict.fromkeys(weights, 1.0 / max(1, len(weights)))
         )
+        latency = self.decision_latency_s
+        lands_at = self._publish_to_hosts(src, dst, normalised, latency)
         record = {
             "src": src,
             "dst": dst,
             "t": round(self.now, 6),
             "weights": normalised,
             "meta": dict(meta) if meta else {},
+            "latency_s": round(latency, 6),
+            "lands_at_s": round(lands_at, 6),
         }
         self.advisories.append(record)
-        # Traffic follows the advisory, which is what makes telemetry appear on
-        # the paths the model recommended and nowhere else.
-        for pid, w in normalised.items():
-            self._traffic[pid] = w
         self._emit(RawEvent(self.now, "tools", "advisory", dict(record)))
-        return {"accepted": True, "t": round(self.now, 6), "n_paths": len(normalised)}
+        # The turn ends where the advisory does. A model that publishes twice
+        # in one turn has the second decision timed from the first, which is
+        # what actually happened. Not logged as a turn: it is implied by the
+        # publish, and replaying it as well would double-count it.
+        self._turn_start_s = self.now
+        return {
+            "accepted": True,
+            "t": round(self.now, 6),
+            "n_paths": len(normalised),
+            "applies_at_s": round(lands_at, 6),
+        }
+
+    def _publish_to_hosts(
+        self, src: str, dst: str, weights: Mapping[str, float], latency_s: float
+    ) -> float:
+        """Hand the advisory to the substrate, delayed by the decision latency.
+
+        The scope's population is created on the first advisory naming it. That
+        is the honest order: hosts exist because somebody is advising them, and
+        registering every pair up front would put traffic on the network that
+        nobody asked for.
+        """
+        a, b = self._as_index(src), self._as_index(dst)
+        if self._world.hosts.scope(a, b) is None:
+            self._world.add_scope(a, b)
+        # The model's ids are hex strings under whichever identity policy is in
+        # force; the substrate keys on the integers behind them.
+        by_id = {int(pid, 16): float(w) for pid, w in weights.items()}
+        return self._world.publish_advisory(a, b, by_id, latency_s=latency_s)
 
     # ---------------------------------------------------------------- streams
 
@@ -703,21 +762,38 @@ class Session:
     def _harvest_telemetry(self) -> None:
         """One record per path that carried traffic.
 
-        Which paths those are is decided by the advisories the model published,
-        so the sample is biased towards what it recommended. That bias is in the
-        problem -- you cannot measure a path nobody is using -- and correcting it
-        here would be inventing data.
+        Which paths those are is decided by where the hosts actually went, so
+        the sample is biased towards what the model recommended -- and, once the
+        loop is closed, towards where the sampling noise happened to put them.
+        That bias is in the problem: you cannot measure a path nobody is using,
+        and correcting it here would be inventing data.
+
+        ``share`` is the *realised* share, not the published weight. The two
+        differ by the sampling noise, and a model that assumes its advice was
+        followed exactly is wrong by exactly that much.
         """
-        watched = {pid for pid, w in self._traffic.items() if w > 0.0} | self._probed
+        self._traffic = {
+            _hex(pid): share for pid, share in self._world.hosts.shares().items() if share > 0.0
+        }
+        # One sample per path per tick. A tool call that does not move the world
+        # past a tick boundary produces no new measurement, and emitting the
+        # previous one again would let a model manufacture telemetry by asking
+        # questions -- cheaply, since the duplicate costs it nothing to read.
+        fresh = self._world.ticks != self._telemetry_tick
+        self._telemetry_tick = self._world.ticks
+        watched = (set(self._traffic) if fresh else set()) | self._probed
         self._probed.clear()
         if not watched or not self._subscribed("telemetry"):
             return
-        for pid in sorted(watched):
-            info = self._infos.get(pid)
-            if info is None:
-                continue
-            path: Path = info.handle
-            metrics = self._world.links.path_metrics(path.ifaces)
+        # Composed in one batch rather than one path at a time: at a hundred
+        # scopes this runs over a couple of hundred paths every tick, and the
+        # per-path version of it was the largest single cost in the loop.
+        sampled = [pid for pid in sorted(watched) if pid in self._infos]
+        infos = [self._infos[pid] for pid in sampled]
+        latency, bandwidth, loss = self._world.links.path_metrics_batch(
+            [cast("Path", info.handle).ifaces for info in infos]
+        )
+        for pid, info, ms, mbps, lost in zip(sampled, infos, latency, bandwidth, loss, strict=True):
             self._emit(
                 RawEvent(
                     self.now,
@@ -727,9 +803,9 @@ class Session:
                         "path_id": pid,
                         "src": info.ref.src,
                         "dst": info.ref.dst,
-                        "latency_ms": metrics.latency_ms,
-                        "loss": metrics.loss,
-                        "available_mbps": metrics.bandwidth_mbps,
+                        "latency_ms": float(ms),
+                        "loss": float(lost),
+                        "available_mbps": float(mbps),
                         "share": self._traffic.get(pid, 0.0),
                         "source": "idint",
                     },
@@ -818,6 +894,8 @@ class Session:
                 session.advance(float(record.args.get("dt_s", 0.0)))
             elif record.kind == "tokens":
                 session.think(int(record.args.get("tokens", 0)))
+            elif record.kind == "turn":
+                session.begin_turn()
         return session
 
     # ---------------------------------------------------------------- reports
@@ -904,6 +982,7 @@ def drive_episode(
     model.reset(session.view(), seed=session.seed)
     for cycle in range(cycles):
         for src, dst in scopes:
+            session.begin_turn()
             found = session.call("query_paths", src=src, dst=dst, limit=limit)
             paths = session.known_paths(src, dst)
             if not paths:
@@ -952,6 +1031,7 @@ def run_episode(
     if getattr(model.capabilities, "uses_tools", False) and hasattr(model, "act"):
         model.reset(session.view(), seed=session.seed)
         for _ in range(cycles):
+            session.begin_turn()
             session.deadline_s = session.now + deadline_s
             model.act(session, deadline_s)
             session.deadline_s = None

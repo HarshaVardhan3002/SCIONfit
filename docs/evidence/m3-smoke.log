@@ -1,0 +1,12 @@
+model                swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  calls  wall_clock_s
+-------------------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  -----  ------------
+MinRTTGreedy         3.3     0.4796       0.2968             4.08             0.2374     1313          0               1.869           2         7681   2.18        
+ReferenceStochastic  0.5457  0.0983       0.2059             3.17             0.5455     442.2         0.0606          1.44            0         7681   7.879       
+
+[PASS] greedy link amplitude >= 4x stochastic: 6.05x  (3.300 vs 0.546)
+[PASS] greedy split amplitude >= 4x stochastic: 4.88x  (0.480 vs 0.098)
+[PASS] greedy mean path cost >= 2x stochastic: 2.97x  (1313 ms vs 442 ms)
+[FAIL] M3 as originally written: peak dominance > 0.5 (see ADR 0010): 0.297
+[FAIL] samples sit on the decision grid (no overruns): 2, 0
+
+wrote docs\evidence\m3-smoke\report.html in 10.61s

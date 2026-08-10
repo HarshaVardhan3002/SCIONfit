@@ -294,6 +294,21 @@ class LinkState:
         np.add.at(self.demand_mbps, iface, mbps)
         self._invalidate()
 
+    def set_all_demand(self, mbps: NDArray[np.float64]) -> None:
+        """Replace the whole demand array at once.
+
+        What the closed loop writes every step: the host population recomputes
+        its offered load from scratch rather than adjusting it, so the array
+        arrives complete and an incremental setter would only invite drift.
+        """
+        if mbps.shape != self.demand_mbps.shape:
+            raise ValueError(
+                f"demand array has shape {mbps.shape}, and this link state has "
+                f"{self.n_ifaces} directions"
+            )
+        self.demand_mbps = np.asarray(mbps, dtype=np.float64)
+        self._invalidate()
+
     def clear_demand(self) -> None:
         self.demand_mbps.fill(0.0)
         self._invalidate()

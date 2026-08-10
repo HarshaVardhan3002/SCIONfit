@@ -26,7 +26,8 @@ scenario without building 2,000 ASes.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path as FilePath
 from typing import Any, Final
@@ -34,6 +35,7 @@ from typing import Any, Final
 import numpy as np
 
 from scionarena.core.clock import Clock, Event
+from scionarena.core.hosts import HostParams, HostPopulation, ScopeState
 from scionarena.core.linkstate import BackgroundParams, LinkParams, LinkState
 from scionarena.core.segments import (
     IDENTITY_POLICIES,
@@ -71,6 +73,7 @@ EVENT_KINDS: Final = (
     "demand_surge",  # exogenous-but-scheduled load, in Mbps, on a scope
     "demand_clear",
     "topology_change",  # the rare, planned, expensive one: rebuilds the world
+    "advisory_apply",  # M3: a published advisory reaching the hosts, late
 )
 
 #: A front-end may carry its own events through the timeline under this prefix.
@@ -222,6 +225,11 @@ class Scenario:
     search: SearchSpec = field(default_factory=SearchSpec)
     link: LinkParams = field(default_factory=LinkParams)
     background: BackgroundParams = field(default_factory=BackgroundParams)
+    #: The population every scope gets unless the caller overrides it. In the
+    #: file for the same reason the congestion constants are: two runs that
+    #: differ in how many hosts act on the advice are not the same experiment,
+    #: and nothing in either run's output would say they differed.
+    hosts: HostParams = field(default_factory=HostParams)
     timeline: tuple[TimelineEvent, ...] = ()
     schema: int = SCHEMA_VERSION
 
@@ -288,6 +296,7 @@ class Scenario:
             ("search", SearchSpec),
             ("link", LinkParams),
             ("background", BackgroundParams),
+            ("hosts", HostParams),
         ):
             if key in kwargs:
                 kwargs[key] = _from_mapping(spec, kwargs[key], key)
@@ -337,9 +346,24 @@ class Substrate:
         self.generation = 0
         self._surges: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._next_surge = 0
+        #: Advisories that have reached the hosts. Published-but-not-yet-applied
+        #: is the difference between this and what the session logged, and that
+        #: difference is decision latency.
+        self.n_advisories_applied = 0
+        #: Ticks taken. One per ``scenario.step_s`` of simulated time, plus one
+        #: wherever a caller stopped part way through a step.
+        self.ticks = 0
+        #: When the hosts last offered load. Grid-aligned; the gap to ``now`` is
+        #: what they are charged for next time.
+        self._loaded_at = 0.0
+        #: Instrumentation hooks, run at the end of every tick. Written to by
+        #: whoever is watching; the substrate does not know what they do and
+        #: nothing the model can reach may register one.
+        self.taps: list[Callable[[Substrate], None]] = []
         self.topology = scenario.topology.build(scenario.seed)
         self.segments = self._new_segments()
         self.links = self._new_links()
+        self.hosts = self._new_hosts()
         self._install_timeline()
 
     def _new_segments(self) -> SegmentStore:
@@ -350,6 +374,14 @@ class Substrate:
             policy=self.scenario.beaconing,
             t0=self.clock.now,
             **self.scenario.search.kwargs(),
+        )
+
+    def _new_hosts(self) -> HostPopulation:
+        return HostPopulation(
+            self.topology,
+            seed=self.scenario.seed,
+            params=self.scenario.hosts,
+            identity_policy=self.scenario.identity_policy,
         )
 
     def _new_links(self) -> LinkState:
@@ -404,6 +436,7 @@ class Substrate:
             "demand_surge": ("mbps",),
             "demand_clear": (),
             "topology_change": ("links",),
+            "advisory_apply": ("src", "dst", "weights"),
         }
         missing = [k for k in required[event.kind] if k not in event.params]
         if missing:
@@ -436,6 +469,7 @@ class Substrate:
             "demand_surge": self._on_demand_surge,
             "demand_clear": self._on_demand_clear,
             "topology_change": self._on_topology_change,
+            "advisory_apply": self._on_advisory_apply,
         }[event.kind]
         handler(event)
 
@@ -501,6 +535,17 @@ class Substrate:
         self.links.clear_demand()
         self._surges.clear()
 
+    def _on_advisory_apply(self, event: Event) -> None:
+        """An advisory reaching the hosts, however long after it was decided.
+
+        Nothing here knows how long that was, and that is the point: the delay
+        was spent on the clock, so between the decision and this handler the
+        world went on stepping. See ADR 0009.
+        """
+        weights = {int(k): float(v) for k, v in dict(event.get("weights", {})).items()}
+        self.hosts.publish(int(event.get("src")), int(event.get("dst")), weights, t=self.clock.now)
+        self.n_advisories_applied += 1
+
     def _on_topology_change(self, event: Event) -> None:
         """The rare, planned one. Rebuilds segments and link state.
 
@@ -510,11 +555,17 @@ class Substrate:
         of it would invite using it as the background churn it is not.
         """
         links = [int(x) for x in event.get("links", ())]
+        scopes = [(s.src, s.dst, s.params) for s in self.hosts.scopes.values()]
         self.topology = self.topology.without_links(links)
         self.segments = self._new_segments()
         self.links = self._new_links()
         self.segments.advance_to(self.clock.now)
         self.links.advance_to(self.clock.now)
+        # The populations survive; their path sets do not, because the
+        # interface ids they were built from no longer mean what they meant.
+        self.hosts = self._new_hosts()
+        for src, dst, params in scopes:
+            self.add_scope(src, dst, params=params)
         self._surges.clear()
         self.generation += 1
 
@@ -523,15 +574,76 @@ class Substrate:
     def step(self, dt_s: float | None = None) -> int:
         """Advance one step: dispatch what falls due, then sync the substrate.
 
-        Returns the number of events dispatched. The clock leads and the other
-        three follow it, rather than each carrying its own idea of the time.
+        Returns the number of events dispatched. The clock leads and the rest
+        follow it, rather than each carrying its own idea of the time.
+
+        A step longer than ``scenario.step_s`` is subdivided into ticks on the
+        global grid rather than taken in one jump. That matters once the loop is
+        closed: a probe that costs the model four seconds is four seconds of
+        network, during which hosts resample four times and the load moves four
+        times. Taking it as a single jump would let an expensive call buy the
+        model a frozen world, which is invariant 3 backwards. Aligning the ticks
+        to a grid rather than to wherever the caller happened to stop also keeps
+        two runs that spent their time differently sampling the same instants.
+
+        The order within a tick is load-bearing. Events first, so an advisory
+        that fell due is in force before anybody acts on it. Then segments,
+        because a scope's path set can change and the hosts spread over whatever
+        it is now. Then hosts, who put their traffic on the network. Then the
+        link state, which is what that traffic did. Hosts before links: the
+        other way round, every scope reads the previous tick's congestion and
+        the whole loop runs a tick behind itself.
         """
         step = self.scenario.step_s if dt_s is None else dt_s
         target = self.clock.now + step
-        dispatched = self.clock.run_until(target)
-        self.segments.advance_to(target)
-        self.links.advance_to(target)
+        dispatched = 0
+        while self.clock.now < target - 1e-9:
+            dispatched += self._tick(self._next_tick(target))
         return dispatched
+
+    def _next_tick(self, target: float) -> float:
+        grid = self.scenario.step_s
+        k = math.floor(self.clock.now / grid + 1e-9) + 1
+        return min(k * grid, target)
+
+    def _tick(self, t: float) -> int:
+        dispatched = self.clock.run_until(t)
+        self.segments.advance_to(t)
+        if self._on_grid(t):
+            self._apply_load(t, t - self._loaded_at)
+            self._loaded_at = t
+        self.links.advance_to(t)
+        self.ticks += 1
+        for tap in self.taps:
+            tap(self)
+        return dispatched
+
+    def _on_grid(self, t: float) -> bool:
+        """Whether ``t`` is a point where the population gets to act.
+
+        A caller that stops mid-grid -- which is every tool call, since a call
+        costs whatever it costs and not a whole step -- still moves the clock
+        and the link state, but does not make the hosts resample. Otherwise a
+        model that made twenty calls in a step would have shaken the population
+        twenty times by doing nothing but asking questions, and the load series
+        would carry the model's call pattern in it. The resample rate is a
+        property of the hosts.
+        """
+        grid = self.scenario.step_s
+        return abs(t / grid - round(t / grid)) < 1e-9
+
+    def _apply_load(self, t: float, dt_s: float) -> None:
+        """Hosts offer, surges add, and the total is written in one go.
+
+        Recomputed from scratch rather than adjusted, so nothing accumulates a
+        rounding error over a 3,600-second run and reports it as a finding.
+        """
+        if not self.hosts.scopes and not self._surges:
+            return
+        total = self.hosts.step(t, dt_s, self.links).copy()
+        for ifaces, mbps in self._surges.values():
+            np.add.at(total, ifaces, mbps)
+        self.links.set_all_demand(total)
 
     def run(self, until_s: float | None = None) -> int:
         """Step to ``until_s``, or to the scenario's duration. Returns steps taken."""
@@ -553,6 +665,69 @@ class Substrate:
         policy = self.scenario.identity_policy
         return [p.path_id(policy) for p in paths]
 
+    # ------------------------------------------------------------- closed loop
+
+    def add_scope(
+        self,
+        src: int,
+        dst: int,
+        *,
+        limit: int | None = None,
+        params: HostParams | None = None,
+    ) -> ScopeState:
+        """Put a host population on one (src, dst) pair.
+
+        Scopes are registered by whoever is running the experiment rather than
+        by the scenario, because which pairs are interesting is a property of
+        the run and not of the world. What the population is like *is* a
+        property of the world, and lives in ``scenario.hosts``.
+        """
+        return self.hosts.add_scope(src, dst, self.paths_for(src, dst, limit=limit), params=params)
+
+    def refresh_scopes(self, *, limit: int | None = None) -> int:
+        """Re-materialise every scope's path set. Returns how many changed.
+
+        Deliberately explicit. The path set going stale under a population is a
+        real thing that happens, and a substrate that silently re-derived it
+        every step would delete the failure this project is trying to observe.
+        """
+        changed = 0
+        for src, dst in list(self.hosts.scopes):
+            before = self.hosts.scopes[(src, dst)].path_ids
+            scope = self.hosts.refresh(src, dst, self.paths_for(src, dst, limit=limit))
+            if scope is not None and scope.path_ids != before:
+                changed += 1
+        return changed
+
+    def publish_advisory(
+        self,
+        src: int,
+        dst: int,
+        weights: Mapping[int, float],
+        *,
+        latency_s: float = 0.0,
+    ) -> float:
+        """Schedule an advisory to reach the hosts at ``now + latency_s``.
+
+        Returns the time it will land. Zero latency still goes through the
+        queue: it lands at the top of the next step, ahead of the hosts, rather
+        than reaching into the population from inside the decision. The clock
+        refuses to schedule into the past, so no amount of arithmetic elsewhere
+        can apply a decision to the state it was computed from (invariant 3).
+        """
+        at = self.clock.now + max(0.0, float(latency_s))
+        self.clock.at(
+            at,
+            "advisory_apply",
+            {
+                "src": int(src),
+                "dst": int(dst),
+                "weights": {int(k): float(v) for k, v in weights.items()},
+            },
+            priority=PRIORITY_WORLD,
+        )
+        return at
+
     # ------------------------------------------------------------- determinism
 
     def digest(self) -> str:
@@ -570,6 +745,7 @@ class Substrate:
                     "topology": self.topology.digest(),
                     "segments": self.segments.digest(),
                     "links": self.links.digest(),
+                    "hosts": self.hosts.digest(),
                     "clock": self.clock.digest(),
                     "generation": self.generation,
                     "t": round(self.now, 9),

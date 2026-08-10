@@ -40,6 +40,19 @@ scionarena conformance compare              # every reference model, side by sid
 scionfit check my.module:MyModel --format markdown --out report.md
 ```
 
+The closed loop, and the result it exists to produce:
+
+```bash
+scionarena demo                                          # smoke tier, ~10 s
+scionarena demo --tier dev --scopes 40 --slow 8          # add a deliberately slow model
+scionarena demo --tier realistic --scopes 100 --cycles 120
+```
+
+Two reference models over one scenario, one seed and one set of scopes — nothing differs
+but the model — and a self-contained `report.html` of what each did to the network.
+Committed runs are in `docs/evidence/`; what they show, and the one criterion they do not
+meet, is in `docs/milestones/M3.md`.
+
 In Python:
 
 ```python
@@ -157,9 +170,12 @@ behaviour.
 Start with **`CLAUDE.md`**, then **`docs/HANDOFF.md`**, then the milestone you are working
 on in `docs/milestones/`.
 
-M0 has landed: the tree is in the target layout and the import direction
-(`core <- exposure <- {conformance, bench, gym, agent, deploy}`) is enforced by
-`lint-imports` in CI rather than by review.
+M0–M3 have landed: the tree is in the target layout and the import direction
+(`core <- exposure <- instrument <- {conformance, bench, gym, agent, deploy}`) is enforced
+by `lint-imports` in CI rather than by review; the substrate beacons, composes paths and
+carries load; models reach it only through costed, rate-limited tools; and the loop is
+closed, so advice moves hosts, hosts move link state, and link state moves the next
+observation.
 
 ```
 src/scionarena/

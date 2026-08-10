@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "tier": "smoke",
+    "scopes": 8,
+    "cycles": 240,
+    "hosts_per_scope": 200,
+    "seed": 7,
+    "wall_clock_s": 10.61,
+    "digests": {
+      "MinRTTGreedy": "cd73755499e4efbede7f99f4e6a6f311",
+      "ReferenceStochastic": "c575a46fd3f1e611853d3107a7919e52"
+    }
+  },
+  "runs": [
+    {
+      "model": "MinRTTGreedy",
+      "scenario": "smoke-default",
+      "cycles": 240,
+      "scopes": 8,
+      "hosts": 1600,
+      "swing": 3.3003,
+      "share_swing": 0.4796,
+      "oscillation_index": 0.2968,
+      "share_oscillation": 0.3949,
+      "dominant_period": 4.08,
+      "flap_rate": 0.2374,
+      "mean_cost_ms": 1312.711,
+      "mean_deviation": 0.0,
+      "mean_latency_s": 1.8691,
+      "overruns": 2,
+      "calls": 7681,
+      "wall_clock_s": 2.18,
+      "digest": "cd73755499e4efbede7f99f4e6a6f311"
+    },
+    {
+      "model": "ReferenceStochastic",
+      "scenario": "smoke-default",
+      "cycles": 240,
+      "scopes": 8,
+      "hosts": 1600,
+      "swing": 0.5457,
+      "share_swing": 0.0983,
+      "oscillation_index": 0.2059,
+      "share_oscillation": 0.0973,
+      "dominant_period": 3.17,
+      "flap_rate": 0.5455,
+      "mean_cost_ms": 442.152,
+      "mean_deviation": 0.0606,
+      "mean_latency_s": 1.4405,
+      "overruns": 0,
+      "calls": 7681,
+      "wall_clock_s": 7.879,
+      "digest": "c575a46fd3f1e611853d3107a7919e52"
+    }
+  ],
+  "verdicts": [
+    {
+      "criterion": "greedy link amplitude >= 4x stochastic",
+      "measured": "6.05x  (3.300 vs 0.546)",
+      "ok": true
+    },
+    {
+      "criterion": "greedy split amplitude >= 4x stochastic",
+      "measured": "4.88x  (0.480 vs 0.098)",
+      "ok": true
+    },
+    {
+      "criterion": "greedy mean path cost >= 2x stochastic",
+      "measured": "2.97x  (1313 ms vs 442 ms)",
+      "ok": true
+    },
+    {
+      "criterion": "M3 as originally written: peak dominance > 0.5 (see ADR 0010)",
+      "measured": "0.297",
+      "ok": false
+    },
+    {
+      "criterion": "samples sit on the decision grid (no overruns)",
+      "measured": "2, 0",
+      "ok": false
+    }
+  ]
+}

@@ -66,6 +66,7 @@ type = "layers"
 layers = [
   "scionarena.conformance : scionarena.bench : scionarena.gym : scionarena.agent : scionarena.deploy",
   "scionarena.exposure",
+  "scionarena.instrument",
   "scionarena.core",
 ]
 

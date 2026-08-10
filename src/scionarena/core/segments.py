@@ -243,6 +243,10 @@ class SegmentStore:
         self._segments: list[Segment] = []
         #: when each segment is next due for re-beaconing, parallel to _segments
         self._due: list[float] = []
+        #: the same, as an array, built on demand and kept in step. The scan for
+        #: what is due runs on every tick and the realistic tier has enough
+        #: segments that doing it in Python was the substrate's largest cost.
+        self._due_arr: NDArray[np.float64] | None = None
         #: earliest of those, so the common "nothing is due" step stays O(1)
         self._next_due = float("inf")
         #: segment ids of the up-segments registered by each AS
@@ -325,6 +329,7 @@ class SegmentStore:
         )
         due = self._jittered_due(created_s)
         self._due.append(due)
+        self._due_arr = None
         self._next_due = min(self._next_due, due)
         return seg_id
 
@@ -651,9 +656,11 @@ class SegmentStore:
         self.t = t
         if t < self._next_due:  # the common case, and it must not be O(segments)
             return 0
-        due = [i for i, when in enumerate(self._due) if when <= t]
+        if self._due_arr is None:
+            self._due_arr = np.array(self._due, dtype=np.float64)
+        due = np.flatnonzero(self._due_arr <= t)
         self._resign_all(due, t)
-        return len(due)
+        return int(due.size)
 
     def rebeacon(self, seg_ids: Sequence[int] | None = None) -> int:
         """Force a re-beaconing round now. Used by probes and scenario events."""
@@ -661,7 +668,7 @@ class SegmentStore:
         self._resign_all(targets, self.t)
         return len(targets)
 
-    def _resign_all(self, seg_ids: Sequence[int], t: float) -> None:
+    def _resign_all(self, seg_ids: Sequence[int] | NDArray[np.intp], t: float) -> None:
         #: Which segments the last round touched. The beacon feed needs to know
         #: *which*, not how many, and rescanning every segment to find out would
         #: make a cheap step expensive at the realistic tier.
@@ -675,9 +682,16 @@ class SegmentStore:
                 created_s=t,
                 expiry_s=t + self.policy.lifetime_s,
             )
-            self._due[seg_id] = self._jittered_due(t)
-        if seg_ids:
-            self._next_due = min(self._due) if self._due else float("inf")
+            when = self._jittered_due(t)
+            self._due[seg_id] = when
+            if self._due_arr is not None:
+                self._due_arr[seg_id] = when
+        if len(seg_ids):
+            self._next_due = (
+                float(self._due_arr.min())
+                if self._due_arr is not None
+                else (min(self._due) if self._due else float("inf"))
+            )
             self._invalidate()
 
     def expired(self, t: float | None = None) -> list[int]:
