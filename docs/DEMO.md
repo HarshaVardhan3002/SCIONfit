@@ -84,7 +84,7 @@ quietly rewritten after it, and neither was the ADR.
 
 ```bash
 scionarena demo --tier dev --scopes 40 --slow 8      # a model that thinks too slowly
-scionarena demo --tier realistic --scopes 100 --cycles 120
+scionarena demo --tier realistic --scopes 100 --cycles 80
 ```
 
 (the second and third presets in the UI, if you are driving it from there)
@@ -96,6 +96,15 @@ network does not wait for the model* — shown rather than asserted.
 
 The realistic tier is 2,000 ASes and 10,000 links with 100 concurrent scopes. Committed
 runs of all three are in `docs/evidence/`.
+
+**Expect the realistic run to fail three of its five criteria, and do point at that.** The
+headline holds -- the greedy model still swings 12x wider than the stochastic one -- but
+the split-amplitude and cost thresholds were set at the smoke tier and do not transfer,
+and peak dominance comes out at 0.349 after reaching 0.848 on smaller scenarios. The
+absolute swing collapses too, from 3.25 to 0.144: a hundred scopes spread over ten
+thousand links do not concentrate on any one of them. A harness whose demo passes at every
+scale is a harness that is not measuring anything, and `docs/milestones/M3.md` says which
+of these are thresholds to restate and which is a real limit.
 
 ## Questions to expect
 

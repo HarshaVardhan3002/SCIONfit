@@ -5,7 +5,7 @@
     "cycles": 240,
     "hosts_per_scope": 200,
     "seed": 7,
-    "wall_clock_s": 2750.34,
+    "wall_clock_s": 318.08,
     "digests": {
       "MinRTTGreedy": "0a8453dce2b72aa8e044e032ea5ab893",
       "ReferenceStochastic": "91d5cefc97fed6d192d767f91cd46ee8",
@@ -30,8 +30,9 @@
       "mean_deviation": 0.0375,
       "mean_latency_s": 3.2103,
       "overruns": 176,
+      "grid_uniform": false,
       "calls": 38881,
-      "wall_clock_s": 55.812,
+      "wall_clock_s": 55.033,
       "digest": "0a8453dce2b72aa8e044e032ea5ab893"
     },
     {
@@ -51,8 +52,9 @@
       "mean_deviation": 0.0874,
       "mean_latency_s": 3.1669,
       "overruns": 151,
+      "grid_uniform": false,
       "calls": 38881,
-      "wall_clock_s": 2632.921,
+      "wall_clock_s": 198.304,
       "digest": "91d5cefc97fed6d192d767f91cd46ee8"
     },
     {
@@ -72,8 +74,9 @@
       "mean_deviation": 0.0792,
       "mean_latency_s": 11.1985,
       "overruns": 188,
+      "grid_uniform": false,
       "calls": 38881,
-      "wall_clock_s": 50.98,
+      "wall_clock_s": 53.797,
       "digest": "c043915d7cd3bcce8d1eff7a4f8591e5"
     }
   ],
@@ -99,8 +102,8 @@
       "ok": true
     },
     {
-      "criterion": "samples sit on the decision grid (no overruns)",
-      "measured": "176, 151, 188",
+      "criterion": "samples sit on the decision grid (< 1% late)",
+      "measured": "176/240 at 126s, 151/240 at 136s, 188/240 at 124s",
       "ok": false
     },
     {

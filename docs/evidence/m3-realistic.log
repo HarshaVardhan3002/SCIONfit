@@ -1,0 +1,12 @@
+model                decision_s  swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  grid_uniform  calls  wall_clock_s
+-------------------  ----------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  ------------  -----  ------------
+MinRTTGreedy         257         0.144   0.4907       0.3486             3.33             0.5        2059          0.15            3.325           71        False         33201  162.6       
+ReferenceStochastic  267         0.0119  0.2352       0.8862             2.11             0          1325          0.0938          3.193           62        False         33201  703.9       
+
+[PASS] greedy link amplitude >= 4x stochastic: 12.10x  (0.144 vs 0.012)
+[FAIL] greedy split amplitude >= 4x stochastic: 2.09x  (0.491 vs 0.235)
+[FAIL] greedy mean path cost >= 2x stochastic: 1.55x  (2059 ms vs 1325 ms)
+[FAIL] M3 as originally written: peak dominance > 0.5 (see ADR 0010): 0.349
+[FAIL] samples sit on the decision grid (< 1% late): 71/80 at 257s, 62/80 at 267s
+
+wrote docs\evidence\m3-realistic\report.html in 888.08s

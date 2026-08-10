@@ -5,7 +5,7 @@
     "cycles": 240,
     "hosts_per_scope": 200,
     "seed": 7,
-    "wall_clock_s": 10.47,
+    "wall_clock_s": 8.02,
     "digests": {
       "MinRTTGreedy": "2763c1839e78c5a7e6b422d145913996",
       "ReferenceStochastic": "20153f8e38287bf297fbbdf71a0336e8"
@@ -31,7 +31,7 @@
       "overruns": 2,
       "grid_uniform": true,
       "calls": 7777,
-      "wall_clock_s": 2.181,
+      "wall_clock_s": 2.143,
       "digest": "2763c1839e78c5a7e6b422d145913996"
     },
     {
@@ -53,7 +53,7 @@
       "overruns": 0,
       "grid_uniform": true,
       "calls": 7777,
-      "wall_clock_s": 7.741,
+      "wall_clock_s": 5.283,
       "digest": "20153f8e38287bf297fbbdf71a0336e8"
     }
   ],

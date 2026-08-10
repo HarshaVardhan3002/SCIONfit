@@ -46,7 +46,7 @@ The closed loop, and the result it exists to produce:
 scionarena ui                                            # a browser, with the knobs
 scionarena demo                                          # smoke tier, ~10 s
 scionarena demo --tier dev --scopes 40 --slow 8          # add a deliberately slow model
-scionarena demo --tier realistic --scopes 100 --cycles 120
+scionarena demo --tier realistic --scopes 100 --cycles 80
 ```
 
 Two reference models over one scenario, one seed and one set of scopes — nothing differs

@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "tier": "realistic",
+    "scopes": 100,
+    "cycles": 80,
+    "hosts_per_scope": 200,
+    "seed": 7,
+    "wall_clock_s": 888.08,
+    "digests": {
+      "MinRTTGreedy": "ed55458f29fd8ae0a0703289cd55a3c7",
+      "ReferenceStochastic": "4d107469c5771258ddb549b7dcf4db1d"
+    }
+  },
+  "runs": [
+    {
+      "model": "MinRTTGreedy",
+      "scenario": "realistic-default",
+      "cycles": 80,
+      "decision_s": 257.0,
+      "scopes": 100,
+      "hosts": 20000,
+      "swing": 0.144,
+      "share_swing": 0.4907,
+      "oscillation_index": 0.3486,
+      "share_oscillation": 0.6618,
+      "dominant_period": 3.33,
+      "flap_rate": 0.5,
+      "mean_cost_ms": 2058.966,
+      "mean_deviation": 0.15,
+      "mean_latency_s": 3.3246,
+      "overruns": 71,
+      "grid_uniform": false,
+      "calls": 33201,
+      "wall_clock_s": 162.6,
+      "digest": "ed55458f29fd8ae0a0703289cd55a3c7"
+    },
+    {
+      "model": "ReferenceStochastic",
+      "scenario": "realistic-default",
+      "cycles": 80,
+      "decision_s": 267.0,
+      "scopes": 100,
+      "hosts": 20000,
+      "swing": 0.0119,
+      "share_swing": 0.2352,
+      "oscillation_index": 0.8862,
+      "share_oscillation": 0.9127,
+      "dominant_period": 2.11,
+      "flap_rate": 0.0,
+      "mean_cost_ms": 1325.186,
+      "mean_deviation": 0.0938,
+      "mean_latency_s": 3.1927,
+      "overruns": 62,
+      "grid_uniform": false,
+      "calls": 33201,
+      "wall_clock_s": 703.938,
+      "digest": "4d107469c5771258ddb549b7dcf4db1d"
+    }
+  ],
+  "verdicts": [
+    {
+      "criterion": "greedy link amplitude >= 4x stochastic",
+      "measured": "12.10x  (0.144 vs 0.012)",
+      "ok": true
+    },
+    {
+      "criterion": "greedy split amplitude >= 4x stochastic",
+      "measured": "2.09x  (0.491 vs 0.235)",
+      "ok": false
+    },
+    {
+      "criterion": "greedy mean path cost >= 2x stochastic",
+      "measured": "1.55x  (2059 ms vs 1325 ms)",
+      "ok": false
+    },
+    {
+      "criterion": "M3 as originally written: peak dominance > 0.5 (see ADR 0010)",
+      "measured": "0.349",
+      "ok": false
+    },
+    {
+      "criterion": "samples sit on the decision grid (< 1% late)",
+      "measured": "71/80 at 257s, 62/80 at 267s",
+      "ok": false
+    }
+  ]
+}
