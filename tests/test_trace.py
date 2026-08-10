@@ -20,7 +20,29 @@ from scionarena.reference import REFERENCE_MODELS
 # Pinned. If a change moves this, it changed the substrate's behaviour, and the
 # PR must say which behaviour and why. Regenerate with:
 #   python -m pytest tests/test_trace.py -k pinned -q
-CONFORMANCE_TRACE_HASH = "8782e38be869"
+CONFORMANCE_TRACE_HASH = "29d940a70777"
+
+
+def portable(score: float | None) -> float | None:
+    """A probe score, rounded to where it is portable between interpreters.
+
+    Probe scores are Python-level floats -- means over per-path costs, added up
+    with the builtin ``sum``, which uses Neumaier compensation from CPython 3.12
+    and naive addition before it. The two disagree in the last digits: R1 scores
+    0.813911544591865 on 3.11 and 0.8139115445918653 on 3.12. Hashing the
+    unrounded value therefore pins the interpreter alongside the behaviour, which
+    is what turned the whole CI matrix red while every model behaved identically.
+
+    Nine digits is orders of magnitude looser than a summation strategy and
+    orders of magnitude tighter than any change in what a probe measures.
+
+    The substrate's own digest needs none of this and does not get it: it is
+    numpy arithmetic throughout and comes out identical on both interpreters,
+    checked directly rather than assumed
+    (``test_performance.py::test_the_same_scenario_hashes_the_same_in_another_process``
+    covers the same-interpreter case).
+    """
+    return None if score is None else round(score, 9)
 
 
 def conformance_trace_hash(seed: int = 0, repeats: int = 3) -> str:
@@ -30,7 +52,8 @@ def conformance_trace_hash(seed: int = 0, repeats: int = 3) -> str:
         card = check(factory(), seed=seed, repeats=repeats)
         h.update({"model": name, "verdict": card.verdict})
         h.extend(
-            {"probe": r.probe_id, "status": r.status.name, "score": r.score} for r in card.results
+            {"probe": r.probe_id, "status": r.status.name, "score": portable(r.score)}
+            for r in card.results
         )
     return h.short()
 
@@ -137,3 +160,21 @@ def test_hash_is_stable_across_processes():
         digests.append(out.stdout.strip())
 
     assert digests[0] == digests[1] == CONFORMANCE_TRACE_HASH
+
+
+def test_the_pinned_hash_ignores_last_bit_float_noise_and_nothing_larger():
+    """Names the bug: the pinned card hash was interpreter-dependent.
+
+    CPython 3.12 sums floats by Neumaier compensation and 3.11 does not, so the
+    same probe scored 0.813911544591865 on one and 0.8139115445918653 on the
+    other and the 3.12 and 3.13 legs of the matrix failed a determinism test
+    while nothing about any model had changed. ``portable`` rounds that away.
+
+    Both halves matter. Rounding that swallowed a real change would turn the
+    tripwire into decoration, so the second assertion is the one worth keeping:
+    a difference a millionth of the way up the scale still moves the digest.
+    """
+    score = 0.813911544591865
+    assert portable(score) == portable(score + 1e-16)
+    assert portable(score) != portable(score + 1e-6)
+    assert portable(None) is None

@@ -51,7 +51,13 @@ ignore = ["E501", "B008", "C408", "SIM105", "SIM108"]
 "tests/*" = ["F841"]
 
 [tool.mypy]
-python_version = "3.11"
+# No python_version pin. Pinning it to 3.11 while running on a newer interpreter
+# makes mypy parse that interpreter's installed stubs under 3.11 rules, and
+# numpy's stubs use PEP 695 `type` statements -- so the whole check died on
+# `numpy/__init__.pyi: Type statement is only supported in Python 3.12 and
+# greater` before reaching any of our code. What keeps the source 3.11-compatible
+# is the 3.11 leg of the CI matrix, which type-checks on a 3.11 interpreter, plus
+# ruff's target-version above.
 strict = true
 files = ["src/scionarena/core", "src/scionarena/exposure"]
 

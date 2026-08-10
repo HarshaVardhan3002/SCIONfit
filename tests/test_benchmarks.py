@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +142,31 @@ def test_a_metric_the_baseline_never_recorded_is_skipped(bench: Any):
     gating, _ = bench.compare(baseline, current, tolerance=0.15)
 
     assert not gating
+
+
+def test_the_baseline_in_the_repo_is_gateable_on_the_interpreter_that_recorded_it(bench: Any):
+    """Names the bug: CI ran the gate on 3.12 against a 3.11 baseline.
+
+    Machine speed is one scalar and the calibration divides it out. An
+    interpreter is not: at numpy 2.4.6 on one machine, 3.12 ran
+    ``beaconing_build_s`` 15% slower and ``substrate_step_s`` 52% faster than
+    3.11, so three metrics were reported as regressions that no commit caused.
+    """
+    data = json.loads((BENCH.parent / "baseline.json").read_text(encoding="utf-8"))
+
+    assert bench.interpreter_matches(data) == (
+        data["recorded_on"]["python"].split(".")[:2] == platform.python_version().split(".")[:2]
+    )
+
+
+def test_a_patch_release_counts_as_the_same_interpreter(bench: Any):
+    """Otherwise a runner image bumping 3.11.15 to 3.11.16 mutes the gate."""
+    here = platform.python_version().split(".")
+    same_minor = f"{here[0]}.{here[1]}.{int(here[2]) + 7}"
+
+    assert bench.interpreter_matches({"recorded_on": {"python": same_minor}})
+    assert not bench.interpreter_matches({"recorded_on": {"python": f"{here[0]}.99.0"}})
+    assert not bench.interpreter_matches({})
 
 
 def test_the_suite_runs_end_to_end_at_the_smoke_tier(bench: Any):

@@ -302,6 +302,18 @@ so that the rate can change without the measurement changing. [ADR
 them does not reproduce M3's dominance column and says so. The rest of M4 -- trace,
 metric registry, the remaining detectors, the viewer -- is still open.
 
+**CI was red from M0 until M4 and M0's gate says "CI green", so read that tick with the
+correction attached.** Every run failed on `mypy`, which was pinned to `python_version =
+"3.11"` and therefore parsed the 3.12 and 3.13 runners' numpy stubs under 3.11 rules and
+died inside `numpy/__init__.pyi` before reaching any of our code. Nothing after that step
+had ever run on any leg. Clearing it exposed three more, all of them measurement bugs
+rather than substrate bugs, and all three are written up where they live: a wall-clock
+budget asserted in `pytest` that measured the runner (`tests/test_performance.py`), a
+pinned conformance digest that hashed the interpreter's float-summation strategy
+(`tests/test_trace.py`), and a performance gate compared against a three-milestone-stale
+baseline recorded on another interpreter (`benchmarks/run.py`). The lesson is the cheap
+one: a gate nobody has watched fire is not a gate.
+
 Two things measured at the realistic tier that the next milestone inherits. First, an
 episode is bounded by memory rather than by the clock: 257 MiB per decision round for the
 stochastic model against 21 MiB for the greedy one, so 120 rounds over 100 scopes wants

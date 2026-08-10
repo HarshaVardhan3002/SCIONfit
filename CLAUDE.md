@@ -128,8 +128,13 @@ prevent. Example, already in the repo:
 Follow that pattern; a test whose failure message does not tell you what broke is half a
 test.
 
-**Performance.** Any change to `core/` runs the benchmark suite. Regressions beyond 15%
-on the `realistic` tier fail CI. Numbers live in `benchmarks/baseline.json`.
+**Performance.** Any change to `core/` runs the benchmark suite. Regressions beyond 25%
+on the `realistic` tier fail CI. Numbers live in `benchmarks/baseline.json`. The tolerance
+was 15% until M4 measured the normaliser's own error at ~10%; the gate fires only on the
+interpreter the baseline was recorded on, because machine speed divides out and a Python
+version does not. Both measurements are in `benchmarks/run.py`'s docstring. Do not assert a
+wall-clock budget in `pytest` — that belongs here, where a calibration exists; a test
+asserts the property instead (`tests/test_performance.py`, the link-metrics pair).
 
 **Documentation.** An architecture decision goes in `docs/adr/NNNN-title.md` before the
 code that implements it. Keep them short: context, decision, consequences, alternatives

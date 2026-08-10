@@ -1,5 +1,5 @@
 {
-  "calibration_s": 0.009836500001256354,
+  "calibration_s": 0.00941419999799109,
   "gated_tier": "realistic",
   "recorded_on": {
     "numpy": "2.4.6",
@@ -10,25 +10,25 @@
   "schema": 2,
   "tiers": {
     "dev": {
-      "beaconing_build_s": 0.0036485000018728897,
-      "link_metrics_batch_s": 2.386600011959672e-05,
+      "beaconing_build_s": 0.003897599999618251,
+      "link_metrics_batch_s": 2.3940000028233042e-05,
       "link_state_bytes": 96000.0,
       "n_segments": 762.0,
-      "path_query_cold_s": 0.0001769200002308935,
-      "substrate_step_s": 1.701169444358028e-05,
-      "topology_build_s": 0.0008415000047534704,
+      "path_query_cold_s": 0.0001879460000054678,
+      "substrate_step_s": 1.3026750000588234e-05,
+      "topology_build_s": 0.0008555999993404839,
       "topology_bytes": 40208.0
     },
     "realistic": {
-      "beaconing_build_s": 0.0747593000123743,
-      "link_metrics_batch_s": 0.00013709999999264255,
+      "beaconing_build_s": 0.07967610000196146,
+      "link_metrics_batch_s": 0.00014010399994731414,
       "link_state_bytes": 1200000.0,
       "n_segments": 18327.0,
-      "path_query_cold_s": 0.002905641999968793,
-      "substrate_step_s": 0.0006361998055540931,
-      "topology_build_s": 0.007773799996357411,
+      "path_query_cold_s": 0.0029018859999632696,
+      "substrate_step_s": 0.00019613680555570075,
+      "topology_build_s": 0.007569199999124976,
       "topology_bytes": 496008.0
     }
   },
-  "tolerance": 0.15
+  "tolerance": 0.25
 }

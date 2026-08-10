@@ -118,13 +118,90 @@ def test_rebeaconing_the_whole_world_fits_in_a_step():
     )
 
 
-def test_realistic_link_metrics_fit_in_the_step_budget():
+def _counting_recomputes(state: LinkState) -> dict[str, int]:
+    """Count how often the metric arrays are actually computed.
+
+    Every memoised array goes through ``_remember`` exactly once per computation,
+    so counting those calls counts recomputations without a clock in sight.
+    """
+    seen = {"n": 0}
+    original = state._remember
+
+    def remember(name: str, value: object) -> object:
+        seen["n"] += 1
+        return original(name, value)  # type: ignore[arg-type]
+
+    state._remember = remember  # type: ignore[assignment, method-assign]
+    return seen
+
+
+def _one_step_over(state: LinkState, scopes, paths, rng) -> None:
+    state.advance_to(state.t + 60.0)
+    state.set_demand(rng.integers(0, state.n_ifaces, 200), rng.uniform(0, 500, 200))
+    for scope in scopes:
+        state.path_metrics_batch(paths[scope])
+
+
+def test_link_metrics_are_computed_once_a_step_and_not_once_a_scope():
     """A step is: time moves, demand lands, every scope re-reads its paths.
 
     Fifty scopes with a few thousand paths between them is a modest closed loop
-    and it is what M3 will do every tick. The metric arrays are memoised per
-    step for exactly this reason -- recomputing 40,000 directions once per scope
-    would be twenty times over budget while looking like the same code.
+    and it is what M3 does every tick. The metric arrays are memoised per step
+    for exactly that reason -- recomputing 40,000 directions once per scope would
+    be twenty times over budget while looking like the same code.
+
+    Stated as a count rather than as a wall clock, which is what this test
+    asserted until it started failing on CI at 13.4 ms against a 10 ms budget
+    while measuring 7.1 ms on the machine it was written on. Nothing had
+    regressed; an absolute millisecond budget on an unspecified runner measures
+    the runner. The timing of this same loop stays gated in
+    ``benchmarks/run.py`` as ``realistic.link_metrics_batch_s``, where a
+    calibration workload normalises for how fast the machine is and the gate is
+    a 15% change in shape rather than an absolute number. The count is the
+    property the memoisation exists for, and it holds on any hardware.
+    """
+    topo = synthetic(n_ases=REALISTIC.n_ases, n_links=REALISTIC.n_links, seed=0)
+    store = SegmentStore.for_tier(topo, REALISTIC, seed=0)
+    scopes = scope_sample(REALISTIC.n_ases, n=50)
+    paths = {scope: [p.ifaces for p in store.paths_for(*scope)] for scope in scopes}
+    n_paths = sum(len(p) for p in paths.values())
+    assert n_paths > 1_000, f"only {n_paths} paths over {len(scopes)} scopes; not a real step"
+
+    state = LinkState(topo, seed=0)
+    counted = _counting_recomputes(state)
+    steps = 10
+    for _ in range(steps):
+        _one_step_over(state, scopes, paths, np.random.default_rng(0))
+    per_step = counted["n"] / steps
+
+    # Four arrays -- utilisation, latency, loss, available bandwidth -- and one
+    # cache that a step's worth of load and time changes invalidates once.
+    assert per_step <= 8, (
+        f"{per_step:.0f} metric recomputations per step over {len(scopes)} scopes; "
+        f"the per-step cache is not holding across scopes"
+    )
+
+    # Invariant 6, applied to a test: the same measurement with the memoisation
+    # defeated has to fail it, or it is measuring nothing. Dropping the cache
+    # before each scope is what the pre-memoisation code did.
+    naive = LinkState(topo, seed=0)
+    naive_counted = _counting_recomputes(naive)
+    naive.advance_to(naive.t + 60.0)
+    for scope in scopes:
+        naive._invalidate()
+        naive.path_metrics_batch(paths[scope])
+    assert naive_counted["n"] > 20 * per_step, (
+        f"recomputing per scope cost {naive_counted['n']} computations against "
+        f"{per_step:.0f}; this test cannot tell the two apart"
+    )
+
+
+def test_realistic_link_metrics_are_reported_in_wall_clock_too():
+    """The number the count above replaced, measured and printed, not gated.
+
+    Kept because "the property holds" and "the loop is fast enough on this
+    machine" are two different claims and the second one is still worth seeing
+    in the log next to the first.
     """
     topo = synthetic(n_ases=REALISTIC.n_ases, n_links=REALISTIC.n_links, seed=0)
     state = LinkState(topo, seed=0)
@@ -136,14 +213,11 @@ def test_realistic_link_metrics_fit_in_the_step_budget():
     start = time.perf_counter()
     steps = 10
     for _ in range(steps):
-        state.advance_to(state.t + 60.0)
-        state.set_demand(rng.integers(0, state.n_ifaces, 200), rng.uniform(0, 500, 200))
-        for scope in scopes:
-            state.path_metrics_batch(paths[scope])
+        _one_step_over(state, scopes, paths, rng)
     per_step = (time.perf_counter() - start) / steps
-    assert per_step < REALISTIC.step_budget_s, (
-        f"a step over {len(scopes)} scopes took {per_step * 1e3:.2f}ms, "
-        f"budget {REALISTIC.step_budget_s * 1e3}ms"
+    print(
+        f"\nlink metrics over {len(scopes)} scopes: {per_step * 1e3:.2f}ms per step, "
+        f"design budget {REALISTIC.step_budget_s * 1e3:.0f}ms on the reference machine"
     )
 
 

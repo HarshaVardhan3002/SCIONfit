@@ -19,6 +19,27 @@ together, and they will not exactly. It is much better than not correcting,
 and the alternative -- a gate that fires whenever CI is busy -- gets muted
 within a week and then protects nothing.
 
+How imperfect, measured: between the M1 baseline and M4, on the same machine and
+the same interpreter, the calibration got 9% quicker while the substrate's own
+timings were flat to 10% slower. The scaling turned that into +18-23% and would
+have failed a 15% gate on code nobody had touched. That is where ``TOLERANCE``
+below comes from, and why it is a measured number rather than a round one.
+
+**Where the correction gives up: a different interpreter.** Machine speed is one
+number and it can be divided out. A Python version is not. Measured on one
+machine with numpy held at 2.4.6, moving from CPython 3.11 to 3.12 made
+`beaconing_build_s` 15% slower and `substrate_step_s` 52% *faster*, while the
+calibration itself got 8% quicker -- so the scaling pushed every number the
+wrong way and reported three regressions that were not regressions. Different
+code shapes shift by different amounts and one scalar cannot absorb that.
+
+So the gate only fires when the interpreter's minor version matches the one the
+baseline was recorded on. Elsewhere the numbers are printed and the comparison
+is labelled unscaled rather than trusted, and re-recording with ``--update`` on
+that interpreter is what turns the gate back on. Refusing to gate is
+uncomfortable; a gate that cries wolf on every matrix leg is worse, because the
+next person deletes it.
+
 Timings are the **minimum** of the repeats, not the mean. The minimum is the
 one measurement that noise can only move in one direction.
 """
@@ -46,10 +67,32 @@ from scionarena.core.topology import synthetic
 BASELINE = Path(__file__).parent / "baseline.json"
 
 #: A regression beyond this fraction on a gated tier fails CI.
-TOLERANCE = 0.15
+#
+#: 15% at M1, raised to 25% at M4 once the normaliser's own error was measured
+#: rather than assumed. Same machine, same interpreter, same commit, three runs:
+#: absolute timings repeated to within 3%, but the calibration came out 9%
+#: quicker than when the baseline was recorded, so every expectation shrank by
+#: 9% and metrics that had genuinely moved 8-10% were reported at +18-23%. A
+#: gate whose normaliser carries ~10% of error cannot resolve 15%. 25% still
+#: catches what this gate exists for -- the M3 regression it is modelled on was
+#: a hundredfold, not a fifth -- and the per-metric deltas are printed on every
+#: run whether they gate or not, so a real 20% is still visible in the log.
+TOLERANCE = 0.25
 
 #: Only this tier is gated. The others are recorded so a regression is visible.
 GATED_TIER = "realistic"
+
+
+def interpreter_matches(baseline: dict[str, Any]) -> bool:
+    """Is this the interpreter the baseline was recorded on, to the minor version?
+
+    Patch releases are treated as the same interpreter: they do not change the
+    bytecode or the evaluation loop in ways that move these numbers, and
+    requiring an exact match would mean the gate switched itself off every time
+    a runner image picked up 3.11.16.
+    """
+    recorded = str(baseline.get("recorded_on", {}).get("python", ""))
+    return recorded.split(".")[:2] == platform.python_version().split(".")[:2]
 
 
 def calibration_s(repeats: int = 7) -> float:
@@ -235,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--tolerance", type=float, default=TOLERANCE)
+    parser.add_argument(
+        "--gate-anyway",
+        action="store_true",
+        help="gate even if the baseline came from another interpreter (it will lie)",
+    )
     parser.add_argument("--json", action="store_true", help="print the measurements as JSON")
     args = parser.parse_args(argv)
 
@@ -271,6 +319,19 @@ def main(argv: list[str] | None = None) -> int:
         print("\nregressions:")
         for line in everything:
             print(f"  {line}")
+
+    same_interpreter = interpreter_matches(baseline)
+    if not same_interpreter and not args.gate_anyway:
+        recorded = baseline.get("recorded_on", {}).get("python", "unknown")
+        print(
+            f"\nNOT GATED: the baseline was recorded on Python {recorded} and this is "
+            f"{platform.python_version()}. The calibration divides out machine speed, "
+            f"not an interpreter -- see the module docstring for the measurement. "
+            f"The numbers above are printed for comparison and nothing above is trusted. "
+            f"Re-record with --update on this interpreter, or force with --gate-anyway."
+        )
+        return 0
+
     if gating:
         print(f"\nFAIL: {len(gating)} gated regression(s) beyond {args.tolerance:.0%}")
         return 1
