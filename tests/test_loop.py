@@ -80,18 +80,27 @@ def test_oscillation_costs_what_it_is_supposed_to_cost(runs) -> None:
     assert runs["minrtt"].cost() > 2 * runs["reference"].cost()
 
 
-def test_peak_dominance_does_not_separate_the_two_models(runs) -> None:
-    """ADR 0010's negative finding, at the scale where it was found.
+def test_peak_dominance_does_not_separate_the_two_models_at_this_size(runs) -> None:
+    """ADR 0010, as revised: the proposal's measure depends on the run's shape.
 
-    The proposal's measure was a spectral peak. Under multi-scope contention the
-    herding is aperiodic, so the peak is not there to find, and the index ranks
-    the two models within noise of each other -- sometimes backwards. Keep this
-    test: it is the evidence for restating the criterion.
+    Four scopes and a hundred rounds is a perfectly reasonable experiment, and
+    at that size peak dominance puts the two models within a factor of two of
+    each other while amplitude separates them by ten. Run the same pair for 240
+    rounds and dominance separates them by four; run 24 scopes and the greedy
+    model scores 0.85 where it scored 0.33. It is not a broken measure -- it is
+    a measure whose absolute value is not comparable across scales, which is why
+    the criterion is a ratio and why the headline is amplitude.
+
+    Keep this test. If it starts failing because dominance went up, the run's
+    shape changed, and the M3 criterion should be re-read before it is believed.
     """
     greedy, stochastic = runs["minrtt"].oscillation(), runs["reference"].oscillation()
     assert greedy < 2 * stochastic, (
-        f"peak dominance separated the models ({greedy:.3f} vs {stochastic:.3f}); "
-        "if this is now reliable, revisit the M3 criterion and ADR 0010"
+        f"peak dominance separated the models ({greedy:.3f} vs {stochastic:.3f}) at a "
+        "size where it did not when ADR 0010 was revised"
+    )
+    assert runs["minrtt"].swing() > 4 * runs["reference"].swing(), (
+        "amplitude, on the same two runs, is expected to separate them regardless"
     )
 
 

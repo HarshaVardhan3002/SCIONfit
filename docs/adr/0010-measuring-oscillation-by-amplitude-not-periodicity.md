@@ -1,6 +1,6 @@
 # 0010 — Measuring oscillation by amplitude, not periodicity
 
-Status: accepted
+Status: accepted, revised in M3 (see "Revision", which corrects the evidence below)
 Date: M3
 Supersedes nothing. Amends the measurement half of [0009](0009-closing-the-loop-hosts-delay-and-realised-load.md).
 
@@ -70,14 +70,15 @@ scope's realised share of a *fixed* reference path, its first. Not the busiest
 path: for a winner-take-all model the busiest path's share is 1.0 every round
 whichever path is winning, which hides precisely the swapping being measured.
 
-**5. The M3 criterion is restated, and the original is recorded as failed.**
+**5. The M3 criterion is restated.**
 The criterion becomes a ratio between models on the same scenario and seed —
 greedy's fast-band amplitude at least four times the stochastic model's, on both
 the advised-load and realised-split series, plus a mean path cost at least twice
 as high. Ratios rather than absolute thresholds, because amplitude is in the
 series' units and a threshold in those units would be a number tuned to the
 smoke tier. The original ">0.5 / <0.15" is reported in `docs/milestones/M3.md`
-as not met, with these figures.
+alongside it at every scale measured. (Revised: at the time this was written it
+was not met at any scale; see below.)
 
 ## Consequences
 
@@ -93,9 +94,11 @@ as not met, with these figures.
 - The M4 detectors — herding, context rot, identity amnesia, staleness misuse —
   inherit the warning. Any of them ported from the proposal's toy should be
   validated at `n = 1` *and* at scale before its threshold is believed.
-- The negative finding is itself a result, and arguably the most useful one in
-  M3: a published oscillation metric that inverts under multi-scope contention
-  is a trap that any group reusing the proposal's methodology would fall into.
+- The negative finding is itself a result: a published oscillation metric whose
+  value depends this strongly on the number of scopes and the length of the run
+  is a trap for any group reusing the proposal's methodology. (Revised: the
+  *inversion* originally reported here was an artefact of a second bug and is
+  withdrawn; the scale-dependence is not.)
 
 ## Alternatives rejected
 
@@ -124,3 +127,58 @@ not help, and would hurt: the decision cadence defines what "fast" means for a
 control loop, so sampling off-cadence makes the fast band mean something other
 than "per decision round". The aliasing is handled by measuring the model's own
 footprint instead.
+
+---
+
+## Revision — after the cadence fix
+
+The measurements in **Context** were taken on a series that was not uniformly
+sampled, and one of the two claims made from them does not survive being
+measured again.
+
+`run_loop` assumed a 30 s decision round would always fit the model's turn. At
+eight scopes it mostly does; at forty it never does, because probes are charged
+per scope. Every round then ended whenever the turns happened to finish, so the
+world advanced by a variable amount between samples while the FFT was told the
+grid was uniform. The cadence is now calibrated from a few unsampled rounds and
+held (see the loop's `_calibrate`), and with a real grid the numbers change.
+
+Smoke tier, 240 rounds, seed 7, both models on one scenario, sweeping the number
+of concurrent scopes:
+
+| scopes | cadence | amplitude, greedy | amplitude, stochastic | ratio | dominance, greedy | dominance, stochastic |
+|---|---|---|---|---|---|---|
+| 4 | 30 s | 3.33 | 0.32 | 10.5x | 0.330 | 0.076 |
+| 8 | 30 s | 3.25 | 0.54 | 6.0x | 0.507 | 0.148 |
+| 16 | 71 s | 3.00 | 0.30 | 10.2x | 0.712 | 0.157 |
+| 24 | 121 s | 4.46 | 0.24 | 18.7x | 0.848 | 0.279 |
+
+**What is withdrawn.** Peak dominance does not rank the two models backwards.
+The 0.147-against-0.200 inversion in the table above came from an unevenly
+sampled series read off total utilisation, and both of those were bugs. With the
+grid fixed and the detectors reading `advised_load`, dominance ranks the models
+correctly at every scale measured. The sentence "the detector is blind to it"
+was wrong.
+
+**What stands, and is now the actual argument.** Amplitude is stable and
+dominance is not. Across a 6x change in the number of scopes the greedy model's
+amplitude moves between 3.0 and 4.5 and the ratio stays between 6x and 19x,
+while its dominance climbs from 0.33 to 0.85 — through the milestone's 0.5
+threshold, which is therefore a number that means different things at different
+scales. Series length has the same effect: at 4 scopes, 100 rounds gives 0.375
+against 0.249 (1.5x, no separation worth having) and 240 rounds gives 0.330
+against 0.076 (4.3x). A criterion written against dominance is a criterion
+against the run's shape as much as against the model.
+
+That is a weaker finding than the one first recorded, and it is the one the
+evidence supports. Decisions 1 to 4 are unaffected — they were the reason the
+second series and the fixed reference path exist, and both of those are what
+made the corrected measurement possible. Decision 5 stands with its own
+justification rather than the failed threshold: ratios travel across scales,
+absolute thresholds on either detector do not.
+
+**Consequence for M4.** "Validate at n = 1 and at scale" was already the rule
+here. Add to it: validate on a series you have checked is uniformly sampled. The
+detectors cannot see that they are being lied to about their own x axis, and
+neither could the report card — the output looked entirely plausible for as long
+as the bug existed.
