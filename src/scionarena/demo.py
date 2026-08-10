@@ -55,6 +55,7 @@ CARD_COLUMNS = (
     "mean_deviation",
     "mean_latency_s",
     "overruns",
+    "grid_uniform",
     "calls",
     "wall_clock_s",
 )

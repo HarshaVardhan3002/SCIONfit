@@ -164,6 +164,27 @@ def test_the_widening_can_be_turned_off_and_then_the_rounds_do_overrun(scenario)
 def test_a_cadence_that_already_fits_is_left_alone(runs, config) -> None:
     for result in runs.values():
         assert result.cadence_s == config.decision_s
+        assert result.grid_uniform()
+
+
+def test_a_run_that_could_not_keep_its_grid_says_so_on_the_report_card(scenario) -> None:
+    """Measured at the dev tier with forty scopes: calibration is not always enough.
+
+    A model whose rounds get more expensive as the episode runs -- the
+    stochastic one does, because it lights up far more paths and telemetry is
+    charged per record -- outgrows a cadence fixed from its first few rounds.
+    The spectrum of that run is not meaningful, and the one thing that must not
+    happen is for it to be quoted as though it were.
+    """
+    many = busiest_scopes(scenario.build(), 24)
+    result = run_loop(
+        REFERENCE_MODELS["minrtt"](),
+        scenario,
+        many,
+        config=LoopConfig(cycles=12, seed=7, adaptive_cadence=False),
+    )
+    assert not result.grid_uniform()
+    assert result.report()["grid_uniform"] is False
 
 
 # --------------------------------------------------------------------------

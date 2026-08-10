@@ -199,6 +199,18 @@ class LoopResult:
         by_link = self.swing_by_link()
         return max(by_link, key=lambda k: by_link[k]) if by_link else None
 
+    def grid_uniform(self, *, tolerance: float = 0.01) -> bool:
+        """Were the samples taken on an even grid, and so is the spectrum real?
+
+        Every detector here assumes uniform sampling and none of them can tell
+        when that is untrue -- the series is the right length and the numbers
+        look plausible either way. A round that overran ended when the model's
+        turn ended instead of on the grid, so a run with many of them has a
+        frequency axis that does not mean what it says. Carried on the report
+        card next to the numbers it invalidates.
+        """
+        return self.overruns <= tolerance * max(self.config.cycles, 1)
+
     def mean_deviation(self) -> float:
         return float(np.mean(self.deviation)) if self.deviation else 0.0
 
@@ -225,6 +237,7 @@ class LoopResult:
             "mean_deviation": round(self.mean_deviation(), 4),
             "mean_latency_s": round(float(np.mean(self.latency_s)), 4) if self.latency_s else 0.0,
             "overruns": self.overruns,
+            "grid_uniform": self.grid_uniform(),
             "calls": self.session_summary.get("calls", 0),
             "wall_clock_s": round(self.wall_clock_s, 3),
             "digest": self.session_summary.get("digest", ""),

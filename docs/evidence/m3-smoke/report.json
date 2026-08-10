@@ -5,7 +5,7 @@
     "cycles": 240,
     "hosts_per_scope": 200,
     "seed": 7,
-    "wall_clock_s": 10.77,
+    "wall_clock_s": 10.47,
     "digests": {
       "MinRTTGreedy": "2763c1839e78c5a7e6b422d145913996",
       "ReferenceStochastic": "20153f8e38287bf297fbbdf71a0336e8"
@@ -29,8 +29,9 @@
       "mean_deviation": 0.0,
       "mean_latency_s": 1.9159,
       "overruns": 2,
+      "grid_uniform": true,
       "calls": 7777,
-      "wall_clock_s": 2.214,
+      "wall_clock_s": 2.181,
       "digest": "2763c1839e78c5a7e6b422d145913996"
     },
     {
@@ -50,8 +51,9 @@
       "mean_deviation": 0.0604,
       "mean_latency_s": 1.4346,
       "overruns": 0,
+      "grid_uniform": true,
       "calls": 7777,
-      "wall_clock_s": 7.997,
+      "wall_clock_s": 7.741,
       "digest": "20153f8e38287bf297fbbdf71a0336e8"
     }
   ],

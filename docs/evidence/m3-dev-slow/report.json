@@ -5,11 +5,11 @@
     "cycles": 240,
     "hosts_per_scope": 200,
     "seed": 7,
-    "wall_clock_s": 2700.0,
+    "wall_clock_s": 2750.34,
     "digests": {
-      "MinRTTGreedy": "a4a254e17ca876927b03a9860190fd0f",
-      "ReferenceStochastic": "e5faa2b0ac30e4ac58ed551fee2eeb9f",
-      "MinRTTGreedy +8s latency": "3b80b11d1c9e51d228245806032b8034"
+      "MinRTTGreedy": "0a8453dce2b72aa8e044e032ea5ab893",
+      "ReferenceStochastic": "91d5cefc97fed6d192d767f91cd46ee8",
+      "MinRTTGreedy +8s latency": "c043915d7cd3bcce8d1eff7a4f8591e5"
     }
   },
   "runs": [
@@ -17,92 +17,95 @@
       "model": "MinRTTGreedy",
       "scenario": "dev-default",
       "cycles": 240,
+      "decision_s": 126.0,
       "scopes": 40,
       "hosts": 8000,
-      "swing": 4.9065,
-      "share_swing": 0.4747,
-      "oscillation_index": 0.5525,
-      "share_oscillation": 0.6622,
+      "swing": 5.1084,
+      "share_swing": 0.476,
+      "oscillation_index": 0.5588,
+      "share_oscillation": 0.6705,
       "dominant_period": 2.0,
-      "flap_rate": 0.5859,
-      "mean_cost_ms": 2188.263,
-      "mean_deviation": 0.104,
-      "mean_latency_s": 3.1272,
-      "overruns": 240,
-      "calls": 38401,
-      "wall_clock_s": 53.856,
-      "digest": "a4a254e17ca876927b03a9860190fd0f"
+      "flap_rate": 0.6061,
+      "mean_cost_ms": 2212.875,
+      "mean_deviation": 0.0375,
+      "mean_latency_s": 3.2103,
+      "overruns": 176,
+      "calls": 38881,
+      "wall_clock_s": 55.812,
+      "digest": "0a8453dce2b72aa8e044e032ea5ab893"
     },
     {
       "model": "ReferenceStochastic",
       "scenario": "dev-default",
       "cycles": 240,
+      "decision_s": 136.0,
       "scopes": 40,
       "hosts": 8000,
-      "swing": 0.2952,
-      "share_swing": 0.1533,
-      "oscillation_index": 0.9088,
-      "share_oscillation": 0.9069,
-      "dominant_period": 3.85,
-      "flap_rate": 0.5404,
-      "mean_cost_ms": 1204.031,
-      "mean_deviation": 0.0895,
-      "mean_latency_s": 3.057,
-      "overruns": 240,
-      "calls": 38401,
-      "wall_clock_s": 2585.211,
-      "digest": "e5faa2b0ac30e4ac58ed551fee2eeb9f"
+      "swing": 0.2895,
+      "share_swing": 0.1541,
+      "oscillation_index": 0.8402,
+      "share_oscillation": 0.8405,
+      "dominant_period": 5.13,
+      "flap_rate": 0.5859,
+      "mean_cost_ms": 1232.594,
+      "mean_deviation": 0.0874,
+      "mean_latency_s": 3.1669,
+      "overruns": 151,
+      "calls": 38881,
+      "wall_clock_s": 2632.921,
+      "digest": "91d5cefc97fed6d192d767f91cd46ee8"
     },
     {
       "model": "MinRTTGreedy +8s latency",
       "scenario": "dev-default",
       "cycles": 240,
+      "decision_s": 124.0,
       "scopes": 40,
       "hosts": 8000,
-      "swing": 4.3603,
-      "share_swing": 0.4723,
-      "oscillation_index": 0.4673,
-      "share_oscillation": 0.5918,
+      "swing": 4.6007,
+      "share_swing": 0.4766,
+      "oscillation_index": 0.477,
+      "share_oscillation": 0.6492,
       "dominant_period": 2.0,
-      "flap_rate": 0.5101,
-      "mean_cost_ms": 2196.074,
-      "mean_deviation": 0.0707,
-      "mean_latency_s": 11.113,
-      "overruns": 240,
-      "calls": 38401,
-      "wall_clock_s": 50.771,
-      "digest": "3b80b11d1c9e51d228245806032b8034"
+      "flap_rate": 0.5253,
+      "mean_cost_ms": 2217.207,
+      "mean_deviation": 0.0792,
+      "mean_latency_s": 11.1985,
+      "overruns": 188,
+      "calls": 38881,
+      "wall_clock_s": 50.98,
+      "digest": "c043915d7cd3bcce8d1eff7a4f8591e5"
     }
   ],
   "verdicts": [
     {
       "criterion": "greedy link amplitude >= 4x stochastic",
-      "measured": "16.62x  (4.907 vs 0.295)",
+      "measured": "17.65x  (5.108 vs 0.289)",
       "ok": true
     },
     {
       "criterion": "greedy split amplitude >= 4x stochastic",
-      "measured": "3.10x  (0.475 vs 0.153)",
+      "measured": "3.09x  (0.476 vs 0.154)",
       "ok": false
     },
     {
       "criterion": "greedy mean path cost >= 2x stochastic",
-      "measured": "1.82x  (2188 ms vs 1204 ms)",
+      "measured": "1.80x  (2213 ms vs 1233 ms)",
       "ok": false
     },
     {
       "criterion": "M3 as originally written: peak dominance > 0.5 (see ADR 0010)",
-      "measured": "0.552",
+      "measured": "0.559",
       "ok": true
     },
     {
       "criterion": "samples sit on the decision grid (no overruns)",
-      "measured": "240, 240, 240",
+      "measured": "176, 151, 188",
       "ok": false
     },
     {
       "criterion": "a slower model is measurably worse, same model and seed",
-      "measured": "2196 ms vs 2188 ms at 11.11 s decision latency",
+      "measured": "2217 ms vs 2213 ms at 11.20 s decision latency",
       "ok": true
     }
   ]
