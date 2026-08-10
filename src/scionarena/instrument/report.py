@@ -31,7 +31,13 @@ __all__ = [
 PALETTE = ("#d1495b", "#0f4c81", "#28a745", "#f2a541", "#7768ae", "#3f8f8b")
 
 CSS = """
+/* The palette is chosen for a projector and the charts carry meaning in colour,
+   so opt out of the browser's automatic dark inversion rather than let it
+   repaint a red line and a blue line into two grey ones. Chrome's force-dark
+   respects this; without it the SVG legend swatches disappear entirely. */
+:root { color-scheme: only light; }
 body { font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+       background: #fff;
        margin: 0 auto; max-width: 1100px; padding: 32px 24px 64px; color: #17202a; }
 h1 { font-size: 26px; margin: 0 0 4px; }
 h2 { font-size: 18px; margin: 36px 0 6px; }
@@ -232,6 +238,14 @@ def render_html(
     return "".join(
         [
             "<!doctype html><html><head><meta charset='utf-8'>",
+            # The charts carry meaning in colour and are drawn as inline SVG, so a
+            # browser or extension that repaints the page turns a red line and a
+            # blue line into two similar greys. ``color-scheme`` covers Chrome's own
+            # auto-dark; ``darkreader-lock`` is the opt-out Dark Reader honours,
+            # and it is worth carrying because a demo is given on someone else's
+            # machine with someone else's extensions.
+            "<meta name='color-scheme' content='only light'>",
+            "<meta name='darkreader-lock'>",
             f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body>",
             f"<h1>{html.escape(title)}</h1><p class='sub'>{html.escape(subtitle)}</p>",
             render_body(sections, rows, verdicts=verdicts, meta=meta),

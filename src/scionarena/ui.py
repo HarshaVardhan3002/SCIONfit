@@ -157,6 +157,8 @@ def _subtitle(params: dict[str, Any]) -> str:
 
 
 _PAGE = """<!doctype html><html><head><meta charset='utf-8'>
+<meta name='color-scheme' content='only light'>
+<meta name='darkreader-lock'>
 <title>scionarena</title><style>{css}
 form.run {{ background:#f7f9fc; border:1px solid #e3e8ee; border-radius:8px;
   padding:14px 16px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }}
