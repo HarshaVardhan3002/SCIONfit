@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from scionarena.exposure.loop import LoopConfig, LoopResult, busiest_scopes, run
 from scionarena.instrument.report import render_html, report_card
 from scionarena.reference.models import REFERENCE_MODELS
 
-__all__ = ["main", "run_demo", "verdicts"]
+__all__ = ["main", "run_demo", "sections", "verdicts"]
 
 #: The ratios M3 is scored against, per ADR 0010. Ratios between two models on
 #: one scenario, not absolute thresholds: fast-band amplitude is in the units of
@@ -63,18 +63,43 @@ def run_demo(
     seed: int = 7,
     slow_s: float = 0.0,
     models: Sequence[str] = ("minrtt", "reference"),
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> list[LoopResult]:
-    """Every run shares one scenario, one seed and one set of scopes."""
+    """Every run shares one scenario, one seed and one set of scopes.
+
+    ``progress`` is called with ``(what_is_running, rounds_done, rounds_total)``
+    and anything it raises propagates out of here unchanged; ``ui`` cancels a
+    run that way.
+    """
     scenario = Scenario.for_tier(tier, seed=seed)
     picked = busiest_scopes(scenario.build(), scopes)
     config = LoopConfig(cycles=cycles, n_hosts=hosts, seed=seed)
 
+    def watcher(label: str) -> Callable[[int, int], None] | None:
+        if progress is None:
+            return None
+        return lambda done, total: progress(label, done, total)
+
     results = []
     for name in models:
-        results.append(run_loop(REFERENCE_MODELS[name](), scenario, picked, config=config))
+        results.append(
+            run_loop(
+                REFERENCE_MODELS[name](),
+                scenario,
+                picked,
+                config=config,
+                on_cycle=watcher(name),
+            )
+        )
     if slow_s > 0.0:
         slow = LoopConfig(cycles=cycles, n_hosts=hosts, seed=seed, extra_latency_s=slow_s)
-        result = run_loop(REFERENCE_MODELS[models[0]](), scenario, picked, config=slow)
+        result = run_loop(
+            REFERENCE_MODELS[models[0]](),
+            scenario,
+            picked,
+            config=slow,
+            on_cycle=watcher(f"{models[0]} +{slow_s:g}s"),
+        )
         result.model = f"{result.model} +{slow_s:g}s latency"
         results.append(result)
     return results
@@ -134,7 +159,7 @@ def verdicts(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
     return out
 
 
-def _sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
+def sections(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
     """The figure: the same link, and the same scope, under each model."""
     link = _shared_link(results)
     scope = _shared_scope(results)
@@ -250,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         "scionarena M3 — the closed loop",
         f"{args.tier} tier, {args.scopes} concurrent scopes, {args.cycles} decision rounds, "
         f"seed {args.seed}. Same world, same scopes, same seed; only the model differs.",
-        _sections(results),
+        sections(results),
         rows,
         verdicts=checks,
         meta=meta,

@@ -18,12 +18,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-__all__ = ["svg_lines", "report_card", "render_html"]
+__all__ = ["CSS", "svg_lines", "report_card", "render_body", "render_html"]
 
 #: Enough to tell four or five series apart on a projector, in that order.
 PALETTE = ("#d1495b", "#0f4c81", "#28a745", "#f2a541", "#7768ae", "#3f8f8b")
 
-_CSS = """
+CSS = """
 body { font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
        margin: 0 auto; max-width: 1100px; padding: 32px 24px 64px; color: #17202a; }
 h1 { font-size: 26px; margin: 0 0 4px; }
@@ -132,27 +132,24 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-def render_html(
-    title: str,
-    subtitle: str,
+def render_body(
     sections: Sequence[Mapping[str, Any]],
     rows: Sequence[Mapping[str, Any]],
     *,
     verdicts: Sequence[Mapping[str, Any]] = (),
     meta: Mapping[str, Any] | None = None,
 ) -> str:
-    """One page: the criteria, the charts, the report card, and the raw numbers.
+    """Everything below the title, as a fragment.
 
     ``sections`` are ``{"title", "note", "series", "y_label", "y_max"}``.
     ``verdicts`` are ``{"criterion", "measured", "ok"}`` and are rendered first,
     because a demonstration that makes the reader hunt for whether it passed is
     a demonstration that is hiding something.
+
+    Split out from :func:`render_html` so that the saved file and the live UI
+    are the same rendering rather than two that drift apart.
     """
-    out = [
-        "<!doctype html><html><head><meta charset='utf-8'>",
-        f"<title>{html.escape(title)}</title><style>{_CSS}</style></head><body>",
-        f"<h1>{html.escape(title)}</h1><p class='sub'>{html.escape(subtitle)}</p>",
-    ]
+    out: list[str] = []
     if verdicts:
         out.append("<h2>Acceptance criteria</h2><table><tr><th>criterion</th>")
         out.append("<th>measured</th><th>verdict</th></tr>")
@@ -193,5 +190,25 @@ def render_html(
         out.append("<h2>Run</h2><pre style='font-size:12px;color:#35485c'>")
         out.append(html.escape(json.dumps(dict(meta), indent=2, sort_keys=True)))
         out.append("</pre>")
-    out.append("</body></html>")
     return "".join(out)
+
+
+def render_html(
+    title: str,
+    subtitle: str,
+    sections: Sequence[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    verdicts: Sequence[Mapping[str, Any]] = (),
+    meta: Mapping[str, Any] | None = None,
+) -> str:
+    """One standalone page, everything inlined, openable from a ``file://`` URL."""
+    return "".join(
+        [
+            "<!doctype html><html><head><meta charset='utf-8'>",
+            f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body>",
+            f"<h1>{html.escape(title)}</h1><p class='sub'>{html.escape(subtitle)}</p>",
+            render_body(sections, rows, verdicts=verdicts, meta=meta),
+            "</body></html>",
+        ]
+    )

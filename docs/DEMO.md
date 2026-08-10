@@ -5,10 +5,23 @@ from a clean checkout; nothing is a recording.
 
 ```bash
 pip install -e ".[dev]"
-scionarena demo                    # ~10 s, opens nothing, writes demo/report.html
+scionarena ui                      # opens a tab on http://127.0.0.1:8765
 ```
 
-Open `demo/report.html`. That page is the whole argument.
+Click **Run**. Ten seconds later the page is the whole argument.
+
+The form is the scenario: tier, how many scopes contend, how many decision rounds, how
+many hosts each scope has, the seed, and how many extra seconds of decision latency to
+give a deliberately slow third model. Three presets sit under it; the middle one is the
+one to use if the room has half an hour. Long runs report progress per decision round and
+can be stopped, and every finished run has a **download report.html** link that is
+standalone — no server, no network, openable from a USB stick.
+
+Same thing without a browser:
+
+```bash
+scionarena demo                    # writes demo/report.html and prints the card
+```
 
 ---
 
@@ -70,6 +83,8 @@ quietly deleted after it.**
 scionarena demo --tier dev --scopes 40 --slow 8      # a model that thinks too slowly
 scionarena demo --tier realistic --scopes 100 --cycles 120
 ```
+
+(the second and third presets in the UI, if you are driving it from there)
 
 The `--slow` run is the third line on every figure: same model, same seed, eight extra
 seconds of decision latency. The network does not wait, so the advice lands against a

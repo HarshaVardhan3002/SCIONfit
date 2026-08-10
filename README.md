@@ -43,6 +43,7 @@ scionfit check my.module:MyModel --format markdown --out report.md
 The closed loop, and the result it exists to produce:
 
 ```bash
+scionarena ui                                            # a browser, with the knobs
 scionarena demo                                          # smoke tier, ~10 s
 scionarena demo --tier dev --scopes 40 --slow 8          # add a deliberately slow model
 scionarena demo --tier realistic --scopes 100 --cycles 120

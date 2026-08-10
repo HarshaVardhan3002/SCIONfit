@@ -32,7 +32,7 @@ the tools, as before.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -245,8 +245,16 @@ def run_loop(
     budget: Budget | None = None,
     host_params: HostParams | None = None,
     world: Substrate | None = None,
+    on_cycle: Callable[[int, int], None] | None = None,
 ) -> LoopResult:
-    """Run one model over one scenario for ``cycles`` decision rounds."""
+    """Run one model over one scenario for ``cycles`` decision rounds.
+
+    ``on_cycle`` is called with ``(rounds_done, rounds_total)`` after each round
+    and is the only way to see inside a run that takes an hour. It is called on
+    the driver's own thread and anything it raises propagates, which is how the
+    UI cancels a run: there is no other safe point to stop at, because a round
+    half-applied is a world nobody asked for.
+    """
     cfg = config or LoopConfig()
     world = world if world is not None else scenario.build()
     session = Session(
@@ -288,6 +296,8 @@ def run_loop(
         else:
             result.overruns += 1
         _sample(result, world, session, tracked, scopes, indices, published)
+        if on_cycle is not None:
+            on_cycle(cycle + 1, cfg.cycles)
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
     result.hosts_summary = world.hosts.summary()
