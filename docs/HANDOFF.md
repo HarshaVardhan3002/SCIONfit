@@ -296,6 +296,17 @@ rounds get more expensive as it runs therefore hands the detectors a grid that i
 uniform. Sampling on the world's own clock changes what a series is, so it belongs at the
 start of the instrumentation milestone rather than bolted onto the end of this one.
 
+Two things measured at the realistic tier that the next milestone inherits. First, an
+episode is bounded by memory rather than by the clock: 257 MiB per decision round for the
+stochastic model against 21 MiB for the greedy one, so 120 rounds over 100 scopes wants
+~34 GiB. That is invariant 1 working as specified -- nothing is summarised, so nothing can
+be dropped -- but it means the retention policy is a design question M4 has to answer
+rather than inherit, and the model that explores pays for it first. Second, the cost of a
+model's own turn is worth watching in a profiler and not just in a budget: the reference
+model spent minutes per round on a scan that was quadratic in the size of the network,
+which nothing in the suite noticed because every test that would have caught it ran at the
+smoke tier. Both are written up in `docs/milestones/M3.md`.
+
 | | milestone | one-line goal | gate |
 |---|---|---|---|
 | **M0** | foundation reset | repo restructured, existing tests green in new layout | CI green, no behaviour change |
