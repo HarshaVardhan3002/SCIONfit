@@ -183,6 +183,18 @@ def test_missing_numpy_metadata_keeps_the_old_gating_behaviour(bench: Any):
     assert bench.numpy_matches({})
 
 
+def test_platform_family_must_match_to_gate(bench: Any):
+    here = platform.platform().split("-", 1)[0]
+    other = "Windows" if here != "Windows" else "Linux"
+
+    assert bench.platform_matches({"recorded_on": {"platform": f"{here}-1.2.3"}})
+    assert not bench.platform_matches({"recorded_on": {"platform": f"{other}-1.2.3"}})
+
+
+def test_missing_platform_metadata_keeps_the_old_gating_behaviour(bench: Any):
+    assert bench.platform_matches({})
+
+
 def test_the_suite_runs_end_to_end_at_the_smoke_tier(bench: Any):
     """Cheap proof that every metric the runner claims to measure exists."""
     measured = bench.measure_tier("smoke", repeats=1)

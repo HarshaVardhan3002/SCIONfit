@@ -33,8 +33,9 @@ calibration itself got 8% quicker -- so the scaling pushed every number the
 wrong way and reported three regressions that were not regressions. Different
 code shapes shift by different amounts and one scalar cannot absorb that.
 
-So the gate only fires when the interpreter and numpy major/minor versions
-match the baseline metadata. Elsewhere the numbers are printed and the
+So the gate only fires when the baseline and current runtime are comparable:
+same interpreter minor, same numpy major/minor, and same platform family
+(``Windows``, ``Linux``, ``Darwin``). Elsewhere the numbers are printed and the
 comparison is labelled unscaled rather than trusted, and re-recording with
 ``--update`` on that runtime is what turns the gate back on. Refusing to gate
 is uncomfortable; a gate that cries wolf on every matrix leg is worse, because
@@ -106,6 +107,20 @@ def numpy_matches(baseline: dict[str, Any]) -> bool:
     if not recorded:
         return True
     return recorded.split(".")[:2] == np.__version__.split(".")[:2]
+
+
+def platform_matches(baseline: dict[str, Any]) -> bool:
+    """Is this the same platform family the baseline was recorded on?
+
+    ``platform.platform()`` is deliberately rich (kernel, distro build tags),
+    so we compare only the family prefix before the first ``-``.
+    """
+    recorded = str(baseline.get("recorded_on", {}).get("platform", ""))
+    if not recorded:
+        return True
+    recorded_family = recorded.split("-", 1)[0].lower()
+    here_family = platform.platform().split("-", 1)[0].lower()
+    return recorded_family == here_family
 
 
 def calibration_s(repeats: int = 7) -> float:
@@ -335,15 +350,18 @@ def main(argv: list[str] | None = None) -> int:
 
     same_interpreter = interpreter_matches(baseline)
     same_numpy = numpy_matches(baseline)
-    if (not same_interpreter or not same_numpy) and not args.gate_anyway:
+    same_platform = platform_matches(baseline)
+    if (not same_interpreter or not same_numpy or not same_platform) and not args.gate_anyway:
         recorded_python = baseline.get("recorded_on", {}).get("python", "unknown")
         recorded_numpy = baseline.get("recorded_on", {}).get("numpy", "unknown")
+        recorded_platform = baseline.get("recorded_on", {}).get("platform", "unknown")
         print(
             f"\nNOT GATED: the baseline was recorded on Python {recorded_python} / "
-            f"numpy {recorded_numpy} and this is Python {platform.python_version()} / "
-            f"numpy {np.__version__}. The calibration divides out machine speed, "
-            f"not interpreter or numpy-version effects -- see the module docstring for "
-            f"the measurement. "
+            f"numpy {recorded_numpy} / platform {recorded_platform} and this is "
+            f"Python {platform.python_version()} / numpy {np.__version__} / "
+            f"platform {platform.platform()}. The calibration divides out machine speed, "
+            f"not interpreter, numpy-version, or platform-family effects -- see "
+            f"the module docstring for the measurement. "
             f"The numbers above are printed for comparison and nothing above is trusted. "
             f"Re-record with --update on this interpreter, or force with --gate-anyway."
         )
