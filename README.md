@@ -122,6 +122,95 @@ Verdicts: `CONFORMANT`, `PARTIAL`, `OPEN-LOOP ONLY`, `MISDECLARED`, `ERRORED`.
 
 ---
 
+## System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Frontends["1. Front-Ends & Evaluation Harnesses (One Shared Substrate)"]
+        direction TB
+        CLI["CLI: scionarena / scionfit"]
+        WebUI["Web UI: Zero-Dependency Dashboard (ui.py)"]
+        ConfFE["conformance: R1–R10 Behavioral Probes"]
+        BenchFE["bench: Axiomatic Multi-Scope Scenarios (M6)"]
+        GymFE["gym: Gymnasium RL Environment (M7)"]
+        AgentFE["agent: LLM Memory & Context Rot Harness (M8)"]
+        DeployFE["deploy: Live SCION Control-Plane Shim (M9)"]
+    end
+
+    subgraph ExposureBoundary["2. Exposure Layer & Model Boundary (Seam B & D)"]
+        direction TB
+        subgraph ContractsBlock["Model Contracts (contracts.py)"]
+            PathModel["PathModel Protocol: reset · observe · predict · advise"]
+            ToolUsingModel["ToolUsingModel Protocol: act(session, deadline)"]
+            Capabilities["Capabilities: Explicit Declarations & Truth-Check Asymmetry"]
+        end
+
+        subgraph ToolBudgetBlock["Tool Registry & Budgets (tools.py, budget.py)"]
+            ToolRegistry["Tool API: query_paths · probe_path (echo/loss/bwtest) · fetch_history · subscribe"]
+            CostModel["Cost Accounting: Wall-Clock Latency · Bandwidth · Rate Limits · Refusal Fees"]
+        end
+    end
+
+    subgraph LoopEngine["3. Closed-Loop Multi-Scope Orchestrator (loop.py)"]
+        LoopDriver["Closed-Loop Driver: run_loop()"]
+        MultiScope["Multi-Scope Contention Manager (Coupled Bottlenecks)"]
+    end
+
+    subgraph SubstratePhysics["4. Substrate Physics & Domain Engine (core/)"]
+        direction TB
+        Topology["topology.py: Immutable Static CSR Graph (2k+ ASes, ISDs, Link Caps)"]
+        Segments["segments.py: Segment Engine (Up/Core/Down) · Dual IDs: structural_id & segment_id"]
+        LinkState["linkstate.py: Monotone BPR Link Physics + Queue Tail + Diurnal Background Load"]
+        Hosts["hosts.py: Host Population · Multinomial Sampling (O(1/√N)) · Greedy Defectors"]
+        Clock["clock.py: Event Queue & Simulated Wall-Clock · Stopwatch Latency Accounting"]
+        Scenario["scenario.py: Scenario Engine · Timeline Events (degrade, filter, surge)"]
+    end
+
+    subgraph InstrumentationTap["5. Instrumentation & Pathology Tap (instrument/)"]
+        direction TB
+        Sampler["sampler.py: Absolute World-Clock Tap (ADR 0011 Uniform Grid)"]
+        Detectors["detectors.py: FFT Spectral Dominance · Fast-Band Swing Ratio (≥4x) · Flap Rate"]
+        ReportEngine["report.py: Standalone SVG / HTML Viewer · JSON / Markdown Reports"]
+    end
+
+    subgraph FidelityLadder["6. Multi-Tier Fidelity Ladder (backends/)"]
+        direction LR
+        Tier0["Tier 0: ScionPathML (SCIONLab Replay)"]
+        Tier1["Tier 1: Analytical (Built-in Deterministic)"]
+        Tier2["Tier 2: scion-dqn-sim (BRITE + Beaconing)"]
+        Tier3["Tier 3: ietf-scion-testbed (linkd REST + Netem)"]
+    end
+
+    %% Edge Connections
+    CLI --> ConfFE
+    CLI --> LoopEngine
+    WebUI --> LoopEngine
+    BenchFE --> LoopEngine
+    GymFE --> LoopEngine
+    AgentFE --> LoopEngine
+    DeployFE --> LoopEngine
+
+    ConfFE --> ContractsBlock
+    ContractsBlock --> ToolBudgetBlock
+    ToolBudgetBlock --> LoopDriver
+    LoopDriver --> Scenario
+
+    Scenario --> Topology
+    Scenario --> Segments
+    Scenario --> LinkState
+    Scenario --> Hosts
+    Scenario --> Clock
+
+    LinkState -.->|Tapped by| Sampler
+    Sampler --> Detectors
+    Detectors --> ReportEngine
+    LoopDriver --> ReportEngine
+
+    Scenario --> FidelityLadder
+```
+
+---
+
 ## Where this sits relative to existing work
 
 `scionfit` does not reimplement SCION. It layers on top of tools that already exist and are better at their jobs than anything we would write.

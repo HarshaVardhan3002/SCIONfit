@@ -6,3 +6,5 @@ __pycache__/
 .venv/
 dist/
 build/
+demo/
+.import_linter_cache/

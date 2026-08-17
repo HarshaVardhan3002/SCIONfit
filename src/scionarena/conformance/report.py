@@ -165,7 +165,7 @@ class ReportCard:
         L = [
             f"# scionfit report: {c.name} v{c.version}",
             "",
-            f"**Verdict: {self.verdict}**  ·  mean score {self.score:.2f}  ·  "
+            f"**Verdict: {self.verdict}**  |  mean score {self.score:.2f}  |  "
             f"closed-loop ready: {'yes' if self.closed_loop_ready else 'no'}",
             "",
             f"_{self.created}, world seed {self.world_seed}, scionfit {self.scionfit_version}_",

@@ -1,0 +1,252 @@
+{
+  "nodes": [
+    {
+      "id": "ui-cli",
+      "type": "text",
+      "text": "### 🖥️ Front-End Interfaces\n- **CLI**: `scionarena` / `scionfit`\n- **Web UI**: Zero-dependency `ThreadingHTTPServer` (Port 8765)\n- **Demo**: Two-model head-to-head runner",
+      "x": -600,
+      "y": -400,
+      "width": 360,
+      "height": 180,
+      "color": "4"
+    },
+    {
+      "id": "conformance",
+      "type": "file",
+      "file": "Components/Conformance - Probes R1-R10.md",
+      "x": -150,
+      "y": -400,
+      "width": 380,
+      "height": 220,
+      "color": "1"
+    },
+    {
+      "id": "ref-models",
+      "type": "file",
+      "file": "Components/Reference Models.md",
+      "x": 300,
+      "y": -400,
+      "width": 380,
+      "height": 220,
+      "color": "2"
+    },
+    {
+      "id": "exposure-contracts",
+      "type": "file",
+      "file": "Components/Exposure - Contracts & Protocols.md",
+      "x": -150,
+      "y": -120,
+      "width": 380,
+      "height": 220,
+      "color": "3"
+    },
+    {
+      "id": "exposure-tools",
+      "type": "file",
+      "file": "Components/Exposure - Tool Registry & Cost Accounting.md",
+      "x": 300,
+      "y": -120,
+      "width": 380,
+      "height": 220,
+      "color": "3"
+    },
+    {
+      "id": "exposure-loop",
+      "type": "file",
+      "file": "Components/Exposure - Closed Loop.md",
+      "x": -600,
+      "y": -120,
+      "width": 360,
+      "height": 220,
+      "color": "3"
+    },
+    {
+      "id": "core-topology",
+      "type": "file",
+      "file": "Components/Core - Topology.md",
+      "x": -600,
+      "y": 180,
+      "width": 360,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "core-segments",
+      "type": "file",
+      "file": "Components/Core - Segments & Identity.md",
+      "x": -150,
+      "y": 180,
+      "width": 380,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "core-linkstate",
+      "type": "file",
+      "file": "Components/Core - Link State & Load Model.md",
+      "x": 300,
+      "y": 180,
+      "width": 380,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "core-hosts",
+      "type": "file",
+      "file": "Components/Core - Host Population & Traffic.md",
+      "x": 750,
+      "y": 180,
+      "width": 360,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "core-clock",
+      "type": "file",
+      "file": "Components/Core - Clock & Event Engine.md",
+      "x": -600,
+      "y": 460,
+      "width": 360,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "core-scenario",
+      "type": "file",
+      "file": "Components/Core - Scenario Engine.md",
+      "x": -150,
+      "y": 460,
+      "width": 380,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "instrument-sampler",
+      "type": "file",
+      "file": "Components/Instrument - Sampling & Detectors.md",
+      "x": 300,
+      "y": 460,
+      "width": 380,
+      "height": 220,
+      "color": "6"
+    },
+    {
+      "id": "instrument-reports",
+      "type": "file",
+      "file": "Components/Instrument - Reports & Dashboards.md",
+      "x": 750,
+      "y": 460,
+      "width": 360,
+      "height": 220,
+      "color": "6"
+    },
+    {
+      "id": "backends",
+      "type": "file",
+      "file": "Components/Backends - Multi-Tier Fidelity.md",
+      "x": -150,
+      "y": 740,
+      "width": 380,
+      "height": 220,
+      "color": "1"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "fromNode": "ui-cli",
+      "fromSide": "bottom",
+      "toNode": "exposure-loop",
+      "toSide": "top",
+      "label": "launches"
+    },
+    {
+      "id": "e2",
+      "fromNode": "conformance",
+      "fromSide": "bottom",
+      "toNode": "exposure-contracts",
+      "toSide": "top",
+      "label": "evaluates via"
+    },
+    {
+      "id": "e3",
+      "fromNode": "ref-models",
+      "fromSide": "bottom",
+      "toNode": "exposure-contracts",
+      "toSide": "top",
+      "label": "implements"
+    },
+    {
+      "id": "e4",
+      "fromNode": "ref-models",
+      "fromSide": "bottom",
+      "toNode": "exposure-tools",
+      "toSide": "top",
+      "label": "calls tools"
+    },
+    {
+      "id": "e5",
+      "fromNode": "exposure-loop",
+      "fromSide": "bottom",
+      "toNode": "core-scenario",
+      "toSide": "top",
+      "label": "drives"
+    },
+    {
+      "id": "e6",
+      "fromNode": "core-scenario",
+      "fromSide": "left",
+      "toNode": "core-topology",
+      "toSide": "right",
+      "label": "builds"
+    },
+    {
+      "id": "e7",
+      "fromNode": "core-scenario",
+      "fromSide": "top",
+      "toNode": "core-segments",
+      "toSide": "bottom",
+      "label": "beacons"
+    },
+    {
+      "id": "e8",
+      "fromNode": "core-scenario",
+      "fromSide": "right",
+      "toNode": "core-linkstate",
+      "toSide": "left",
+      "label": "updates physics"
+    },
+    {
+      "id": "e9",
+      "fromNode": "core-scenario",
+      "fromSide": "right",
+      "toNode": "core-hosts",
+      "toSide": "bottom",
+      "label": "samples traffic"
+    },
+    {
+      "id": "e10",
+      "fromNode": "core-scenario",
+      "fromSide": "bottom",
+      "toNode": "backends",
+      "toSide": "top",
+      "label": "executes on"
+    },
+    {
+      "id": "e11",
+      "fromNode": "instrument-sampler",
+      "fromSide": "top",
+      "toNode": "core-linkstate",
+      "toSide": "bottom",
+      "label": "taps on world clock"
+    },
+    {
+      "id": "e12",
+      "fromNode": "instrument-sampler",
+      "fromSide": "right",
+      "toNode": "instrument-reports",
+      "toSide": "left",
+      "label": "feeds spectra"
+    }
+  ]
+}

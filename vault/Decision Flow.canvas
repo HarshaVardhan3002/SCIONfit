@@ -1,0 +1,126 @@
+{
+  "nodes": [
+    {
+      "id": "adr02",
+      "type": "file",
+      "file": "Design Choices & Decisions/Crypto Churn vs Physical Static.md",
+      "x": -450,
+      "y": -300,
+      "width": 380,
+      "height": 220,
+      "color": "1"
+    },
+    {
+      "id": "adr04",
+      "type": "file",
+      "file": "Architecture/Seams and Boundaries.md",
+      "x": 0,
+      "y": -300,
+      "width": 380,
+      "height": 220,
+      "color": "2"
+    },
+    {
+      "id": "adr05",
+      "type": "file",
+      "file": "Components/Core - Segments & Identity.md",
+      "x": -450,
+      "y": -20,
+      "width": 380,
+      "height": 220,
+      "color": "1"
+    },
+    {
+      "id": "adr06",
+      "type": "file",
+      "file": "Design Choices & Decisions/BPR Congestion Tail vs MM1.md",
+      "x": 0,
+      "y": -20,
+      "width": 380,
+      "height": 220,
+      "color": "3"
+    },
+    {
+      "id": "adr08",
+      "type": "file",
+      "file": "Components/Exposure - Tool Registry & Cost Accounting.md",
+      "x": 450,
+      "y": -20,
+      "width": 380,
+      "height": 220,
+      "color": "4"
+    },
+    {
+      "id": "adr09",
+      "type": "file",
+      "file": "Components/Core - Host Population & Traffic.md",
+      "x": -450,
+      "y": 260,
+      "width": 380,
+      "height": 220,
+      "color": "5"
+    },
+    {
+      "id": "adr10",
+      "type": "file",
+      "file": "Design Choices & Decisions/Oscillation Amplitude vs Spectral Dominance.md",
+      "x": 0,
+      "y": 260,
+      "width": 380,
+      "height": 220,
+      "color": "6"
+    },
+    {
+      "id": "adr11",
+      "type": "file",
+      "file": "Design Choices & Decisions/Sampling on World Clock vs Decision Cadence.md",
+      "x": 450,
+      "y": 260,
+      "width": 380,
+      "height": 220,
+      "color": "6"
+    }
+  ],
+  "edges": [
+    {
+      "id": "de1",
+      "fromNode": "adr02",
+      "fromSide": "bottom",
+      "toNode": "adr05",
+      "toSide": "top",
+      "label": "requires dual ID"
+    },
+    {
+      "id": "de2",
+      "fromNode": "adr04",
+      "fromSide": "bottom",
+      "toNode": "adr08",
+      "toSide": "top",
+      "label": "enforces boundary"
+    },
+    {
+      "id": "de3",
+      "fromNode": "adr06",
+      "fromSide": "bottom",
+      "toNode": "adr10",
+      "toSide": "top",
+      "label": "creates load dynamics"
+    },
+    {
+      "id": "de4",
+      "fromNode": "adr09",
+      "fromSide": "right",
+      "toNode": "adr10",
+      "toSide": "left",
+      "label": "closes feedback loop"
+    },
+    {
+      "id": "de5",
+      "fromNode": "adr10",
+      "fromSide": "right",
+      "toNode": "adr11",
+      "toSide": "left",
+      "label": "requires uniform grid"
+    }
+  ]
+}
