@@ -45,10 +45,9 @@ jobs:
       # deleting the step; a gate that never fires protects nothing.
       #
       # Pinned to the interpreter `benchmarks/baseline.json` was recorded on.
-      # Machine speed divides out; a Python version does not, and this step ran
-      # on 3.12 against a 3.11 baseline and reported three regressions that were
-      # measured to be the interpreter. On any other leg the suite prints the
-      # numbers and declines to gate.
+      # The benchmark runner also refuses to gate if numpy's major/minor differs
+      # from the baseline metadata: machine speed divides out, dependency/runtime
+      # behaviour shifts do not.
       - name: performance
         if: matrix.python == '3.11'
         run: python benchmarks/run.py

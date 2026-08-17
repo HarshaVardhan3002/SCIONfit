@@ -25,20 +25,20 @@ timings were flat to 10% slower. The scaling turned that into +18-23% and would
 have failed a 15% gate on code nobody had touched. That is where ``TOLERANCE``
 below comes from, and why it is a measured number rather than a round one.
 
-**Where the correction gives up: a different interpreter.** Machine speed is one
-number and it can be divided out. A Python version is not. Measured on one
-machine with numpy held at 2.4.6, moving from CPython 3.11 to 3.12 made
+**Where the correction gives up: runtime drift.** Machine speed is one number and
+it can be divided out. Interpreter and dependency version effects are not.
+Measured on one machine with numpy held at 2.4.6, moving from CPython 3.11 to 3.12 made
 `beaconing_build_s` 15% slower and `substrate_step_s` 52% *faster*, while the
 calibration itself got 8% quicker -- so the scaling pushed every number the
 wrong way and reported three regressions that were not regressions. Different
 code shapes shift by different amounts and one scalar cannot absorb that.
 
-So the gate only fires when the interpreter's minor version matches the one the
-baseline was recorded on. Elsewhere the numbers are printed and the comparison
-is labelled unscaled rather than trusted, and re-recording with ``--update`` on
-that interpreter is what turns the gate back on. Refusing to gate is
-uncomfortable; a gate that cries wolf on every matrix leg is worse, because the
-next person deletes it.
+So the gate only fires when the interpreter and numpy major/minor versions
+match the baseline metadata. Elsewhere the numbers are printed and the
+comparison is labelled unscaled rather than trusted, and re-recording with
+``--update`` on that runtime is what turns the gate back on. Refusing to gate
+is uncomfortable; a gate that cries wolf on every matrix leg is worse, because
+the next person deletes it.
 
 Timings are the **minimum** of the repeats, not the mean. The minimum is the
 one measurement that noise can only move in one direction.
@@ -93,6 +93,19 @@ def interpreter_matches(baseline: dict[str, Any]) -> bool:
     """
     recorded = str(baseline.get("recorded_on", {}).get("python", ""))
     return recorded.split(".")[:2] == platform.python_version().split(".")[:2]
+
+
+def numpy_matches(baseline: dict[str, Any]) -> bool:
+    """Is this broadly the numpy the baseline was recorded on?
+
+    Like the interpreter check, this compares only major/minor and treats patch
+    releases as equivalent. If the baseline predates the ``recorded_on.numpy``
+    field, we keep the old behaviour and allow gating.
+    """
+    recorded = str(baseline.get("recorded_on", {}).get("numpy", ""))
+    if not recorded:
+        return True
+    return recorded.split(".")[:2] == np.__version__.split(".")[:2]
 
 
 def calibration_s(repeats: int = 7) -> float:
@@ -321,12 +334,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {line}")
 
     same_interpreter = interpreter_matches(baseline)
-    if not same_interpreter and not args.gate_anyway:
-        recorded = baseline.get("recorded_on", {}).get("python", "unknown")
+    same_numpy = numpy_matches(baseline)
+    if (not same_interpreter or not same_numpy) and not args.gate_anyway:
+        recorded_python = baseline.get("recorded_on", {}).get("python", "unknown")
+        recorded_numpy = baseline.get("recorded_on", {}).get("numpy", "unknown")
         print(
-            f"\nNOT GATED: the baseline was recorded on Python {recorded} and this is "
-            f"{platform.python_version()}. The calibration divides out machine speed, "
-            f"not an interpreter -- see the module docstring for the measurement. "
+            f"\nNOT GATED: the baseline was recorded on Python {recorded_python} / "
+            f"numpy {recorded_numpy} and this is Python {platform.python_version()} / "
+            f"numpy {np.__version__}. The calibration divides out machine speed, "
+            f"not interpreter or numpy-version effects -- see the module docstring for "
+            f"the measurement. "
             f"The numbers above are printed for comparison and nothing above is trusted. "
             f"Re-record with --update on this interpreter, or force with --gate-anyway."
         )

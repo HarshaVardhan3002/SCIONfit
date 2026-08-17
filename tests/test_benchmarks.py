@@ -169,6 +169,20 @@ def test_a_patch_release_counts_as_the_same_interpreter(bench: Any):
     assert not bench.interpreter_matches({})
 
 
+def test_a_patch_release_counts_as_the_same_numpy(bench: Any):
+    """A numpy patch bump should not switch the gate off."""
+    here = bench.np.__version__.split(".")
+    same_minor = f"{here[0]}.{here[1]}.{int(here[2]) + 7}"
+
+    assert bench.numpy_matches({"recorded_on": {"numpy": same_minor}})
+    assert not bench.numpy_matches({"recorded_on": {"numpy": f"{here[0]}.99.0"}})
+
+
+def test_missing_numpy_metadata_keeps_the_old_gating_behaviour(bench: Any):
+    """Older baselines without the numpy field still gate by interpreter."""
+    assert bench.numpy_matches({})
+
+
 def test_the_suite_runs_end_to_end_at_the_smoke_tier(bench: Any):
     """Cheap proof that every metric the runner claims to measure exists."""
     measured = bench.measure_tier("smoke", repeats=1)
