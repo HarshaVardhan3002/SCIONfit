@@ -397,23 +397,45 @@ def _declaration_checks(model: PathModel, topo: TopologySnapshot, out: list[Chec
         out.append(Check("composes_unseen_paths", OK, "scored a new combination of seen hops"))
 
     # -- reset clears -------------------------------------------------------
+    #
+    # Two questions, and only the second can be answered here with confidence.
+    # "Observing did not move the output" does not prove nothing was kept: a
+    # model that needs more evidence before it stops returning a prior is
+    # indistinguishable, at this scale, from one that keeps nothing. So that
+    # case is UNCHECKED. What *is* provable is the sharper and more damaging
+    # bug: observing moved the output and reset() did not put it back, which
+    # leaks one episode into the next and looks like a model that learns.
     if _declared(model, "stateful"):
+        before = model.predict(topo, paths, horizon_s=0.0, demand=None)
         model.observe(_observations(topo, 2.0, 9.0), topo)
         dirty = model.predict(topo, paths, horizon_s=0.0, demand=None)
-        model.reset(topo, seed=0)
-        clean = model.predict(topo, paths, horizon_s=0.0, demand=None)
-        same = all(abs(dirty[k].cost() - clean[k].cost()) < 1e-9 for k in dirty if k in clean)
-        if same:
+        moved = any(abs(dirty[k].cost() - before[k].cost()) > 1e-9 for k in dirty if k in before)
+        if not moved:
             out.append(
                 Check(
                     "stateful",
-                    CONTRADICTED,
-                    "declared, but reset() left the prediction unchanged after nine times "
-                    "the observed latency -- either nothing is kept, or reset does not clear it",
+                    UNCHECKED,
+                    "nine times the observed latency did not move the prediction here, so a "
+                    "model that keeps nothing and one that has not learned enough to show it "
+                    "cannot be told apart without a run",
                 )
             )
         else:
-            out.append(Check("stateful", OK, "reset() changed what the model predicts"))
+            model.reset(topo, seed=0)
+            clean = model.predict(topo, paths, horizon_s=0.0, demand=None)
+            leaked = all(abs(dirty[k].cost() - clean[k].cost()) < 1e-9 for k in dirty if k in clean)
+            if leaked:
+                out.append(
+                    Check(
+                        "stateful",
+                        CONTRADICTED,
+                        "observe() moved the prediction and reset() did not put it back; a "
+                        "sweep reuses one object over many worlds, so state that survives a "
+                        "reset leaks one episode into the next and reads as a model that learns",
+                    )
+                )
+            else:
+                out.append(Check("stateful", OK, "observe() moved it and reset() cleared it"))
 
     # -- uses_tools ---------------------------------------------------------
     if _declared(model, "uses_tools"):

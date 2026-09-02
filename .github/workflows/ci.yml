@@ -15,7 +15,7 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       # The report extra is installed here so tests/test_report.py runs rather
       # than skips. A test that silently skips in CI is not a test.
-      - run: pip install -e ".[dev,report]"
+      - run: pip install -e ".[dev,report,trees]"
 
       - name: lint
         run: ruff check src tests examples benchmarks

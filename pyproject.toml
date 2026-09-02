@@ -30,6 +30,12 @@ dev = ["pytest>=7", "pytest-cov", "ruff", "mypy>=1.8", "import-linter>=2.0", "pr
 # dependency (ADR 0018). Both are pure wheels on every platform we run on, and
 # neither needs a browser or a GTK stack.
 report = ["matplotlib>=3.8", "reportlab>=4.0"]
+# The gradient-boosted reference model. Behind an extra for the same reason the
+# report stack is: core/ keeps its numpy-only rule, and a benchmark that cannot
+# be installed without a machine-learning toolkit is a benchmark most people
+# will not install. Imported inside the model's own methods (ADR 0021 notes why
+# its fit cost is the interesting part).
+trees = ["scikit-learn>=1.4"]
 
 [project.scripts]
 scionarena = "scionarena.cli:main"

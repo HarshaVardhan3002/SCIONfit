@@ -64,6 +64,7 @@ BUILTIN_MODELS: Final[Mapping[str, str]] = {
     "proportional": "scionarena.reference.models:CapacityProportional",
     "reference": "scionarena.reference.models:ReferenceStochastic",
     "prober": "scionarena.reference.agents:BudgetedProber",
+    "gbdt": "scionarena.reference.trees:GradientBoosted",
 }
 
 #: What may follow the colon: a name, or a dotted path to a nested class.

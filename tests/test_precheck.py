@@ -201,11 +201,27 @@ def test_an_almost_one_hot_softmax_is_a_ranking() -> None:
     assert bad and "ranking" in bad[0].detail
 
 
-def test_a_stateless_model_that_claims_state_is_caught() -> None:
-    """Names the bug found on shipped code the first time this ran:
-    ``Capabilities.stateful`` defaults to True, so it is the one declaration a
-    model can make by not thinking about it, and ``CapacityProportional`` --
-    whose own docstring says it is deliberately blind -- was making it."""
+def test_state_that_survives_a_reset_is_caught() -> None:
+    """The damaging half of the state question, and the only half provable here:
+    a sweep reuses one object over many worlds, so state that outlives a reset
+    leaks one episode into the next and reads as a model that learns."""
+
+    class Leaky(Fine):
+        def reset(self, topo, seed: int = 0) -> None:  # type: ignore[no-untyped-def]
+            pass  # forgets to clear
+
+    report = _report(Leaky)
+    bad = [c for c in report.by_state(CONTRADICTED) if c.name == "stateful"]
+    assert bad and "leaks one episode" in bad[0].detail
+
+
+def test_a_model_whose_output_has_not_moved_yet_is_unchecked_not_accused() -> None:
+    """Names this check's own first bug. It treated "observing did not move the
+    output" as proof that nothing was kept, and reported the shipped
+    ``GradientBoosted`` as contradicted -- a model which is plainly stateful but
+    which returns the beacon prior until it has enough rows to fit. Proving
+    statefulness is possible here; disproving it is not, so the honest answer is
+    the third state."""
 
     class Blind(Fine):
         def __init__(self) -> None:
@@ -222,14 +238,15 @@ def test_a_stateless_model_that_claims_state_is_caught() -> None:
             }
 
     report = _report(Blind)
-    bad = [c for c in report.by_state(CONTRADICTED) if c.name == "stateful"]
-    assert bad and "reset()" in bad[0].detail
+    assert not [c for c in report.by_state(CONTRADICTED) if c.name == "stateful"]
+    unchecked = [c for c in report.by_state(UNCHECKED) if c.name == "stateful"]
+    assert unchecked and "cannot be told apart" in unchecked[0].detail
 
 
 def test_the_shipped_baselines_declare_nothing_they_do_not_do() -> None:
     """The regression for the above: a false declaration on a mandatory baseline
     discredits the floor every other number in the report is measured against."""
-    for alias in ("ema", "minrtt", "proportional", "reference", "prober"):
+    for alias in ("ema", "minrtt", "proportional", "reference", "prober", "gbdt"):
         report = precheck(alias)
         assert report.blocking == [], (alias, report.blocking)
         assert report.by_state(CONTRADICTED) == [], (alias, report.by_state(CONTRADICTED))
