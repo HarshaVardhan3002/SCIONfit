@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from ..exposure.loading import ModelLoadError
+from ..instrument.metrics import FAMILIES, REGISTRY
 from .axes import AXES
 from .results import load_results
 from .sweep import SweepSpec, plan, run_sweep, summarise
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     p_axes = sub.add_parser("axes", help="what a sweep varies")
     p_axes.add_argument("--json", action="store_true")
 
+    p_metrics = sub.add_parser("metrics", help="what a sweep measures")
+    p_metrics.add_argument("--json", action="store_true")
+
     p_plan = sub.add_parser("plan", help="what would run, without running it")
     _add_suite_args(p_plan)
 
@@ -94,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "axes":
         return _axes(args)
+    if args.command == "metrics":
+        return _metrics(args)
     if args.command == "show":
         return _show(args)
 
@@ -141,6 +147,34 @@ def _axes(args: argparse.Namespace) -> int:
             note = f"  # {value.note}" if value.note else ""
             print(f"    {value.label:<14}{mark}{note}")
         print()
+    return 0
+
+
+def _metrics(args: argparse.Namespace) -> int:
+    """The registry, by family. What `--metric` will take."""
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    name: {"family": m.family, "doc": m.doc, "higher_is_better": m.higher_is_better}
+                    for name, m in sorted(REGISTRY.items())
+                },
+                indent=2,
+            )
+        )
+        return 0
+    for family in FAMILIES:
+        print(f"{family}")
+        for name, entry in sorted(REGISTRY.items()):
+            if entry.family == family:
+                if entry.higher_is_better is None:
+                    arrow = "closer to zero is better"
+                else:
+                    arrow = "higher is better" if entry.higher_is_better else "lower is better"
+                print(f"    {name:<20} {entry.doc}")
+                print(f"    {'':<20} ({arrow})")
+        print()
+    print("an accuracy metric reports one value per horizon, as name.h0 / name.h60 / name.h300")
     return 0
 
 

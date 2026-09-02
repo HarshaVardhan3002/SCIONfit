@@ -47,7 +47,22 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, types only
     from scionarena.core.scenario import Substrate
 
-__all__ = ["Series", "Sampler", "GRID_EPS"]
+__all__ = ["Series", "Sampler", "GRID_EPS", "path_name"]
+
+
+def path_name(path_id: int) -> str:
+    """A path identifier as the *model* sees it.
+
+    ``instrument`` may not import ``exposure``, so the rendering the session
+    uses is written down twice, and
+    ``tests/test_metrics.py::test_the_truth_series_is_keyed_the_way_a_model_names_a_path``
+    is the only thing keeping the copies equal. They have to match exactly: a
+    truth series keyed on the raw integer and a forecast keyed on the hex string
+    never join, and every accuracy metric silently reports ``None`` -- which is
+    how this was found.
+    """
+    return f"{path_id & 0xFFFFFFFFFFFFFFFF:016x}"
+
 
 #: Slack when deciding whether a tick landed on a grid point. Times are
 #: accumulated in floating point over runs of thousands of seconds, so an exact
@@ -84,6 +99,19 @@ class Series:
     #: Per sample: load-weighted mean path cost. What the model is nominally
     #: optimising, and what oscillation destroys.
     mean_cost_ms: list[float] = field(default_factory=list)
+    #: Per sample: the cheapest path each scope had, averaged over scopes. The
+    #: hindsight-optimal *fixed* assignment, and therefore a lower bound on
+    #: achievable cost -- moving the whole scope onto it would have raised it.
+    #: Regret measured against this is an upper bound on true regret, which is
+    #: what ADR 0017 chose and what ``regret_ms`` is documented as.
+    best_cost_ms: list[float] = field(default_factory=list)
+    #: ``(src, dst, path_id)`` -> that path's true cost at each sample, in ms.
+    #: The truth an accuracy metric scores a forecast against. Bounded by
+    #: construction: only the scopes being driven, and only the paths the model
+    #: was shown. A path that appears or vanishes mid-run is padded with NaN
+    #: rather than dropped, so every series is the same length as ``times`` and
+    #: "not present" stays distinguishable from "cost zero".
+    path_cost: dict[tuple[str, str, str], list[float]] = field(default_factory=dict)
     #: Grid points the clock passed without a tick landing on them. Zero unless
     #: something advanced time behind the substrate's back.
     skipped: int = 0
@@ -248,6 +276,7 @@ class Sampler:
 
         deviations: list[float] = []
         costs: list[float] = []
+        best: list[float] = []
         for scope, (a, b) in zip(self.scopes, self.indices, strict=True):
             state = world.hosts.scope(a, b)
             if state is None or state.n_paths == 0 or state.counts.sum() <= 0:
@@ -261,5 +290,29 @@ class Sampler:
                     state.owner, weights=cost[state.ifaces], minlength=state.n_paths
                 )
                 costs.append(float((per_path * shares).sum()))
+                best.append(float(per_path.min()))
+                for index, path_id in enumerate(state.path_ids):
+                    self._push((scope[0], scope[1], path_name(path_id)), float(per_path[index]))
         self.series.deviation.append(max(deviations, default=0.0))
         self.series.mean_cost_ms.append(float(np.mean(costs)) if costs else float("nan"))
+        self.series.best_cost_ms.append(float(np.mean(best)) if best else float("nan"))
+        self._pad()
+
+    def _push(self, key: tuple[str, str, str], value: float) -> None:
+        """Record one path's true cost, back-filling a path that appeared late."""
+        track = self.series.path_cost.get(key)
+        if track is None:
+            # ``times`` already has this sample appended, so the back-fill is
+            # everything before it.
+            track = [float("nan")] * (len(self.series.times) - 1)
+            self.series.path_cost[key] = track
+        track.append(value)
+
+    def _pad(self) -> None:
+        """NaN for every path that did not exist this sample. Not zero: zero is
+        a real cost and a detector cannot tell a fabricated one from a measured
+        one."""
+        want = len(self.series.times)
+        for track in self.series.path_cost.values():
+            if len(track) < want:
+                track.extend([float("nan")] * (want - len(track)))

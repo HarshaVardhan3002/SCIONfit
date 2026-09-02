@@ -30,6 +30,7 @@ from scionarena.bench import (
     write_result,
 )
 from scionarena.bench.cli import main as bench_main
+from scionarena.bench.score import compliant_share_threshold
 from scionarena.reference.baselines import MANDATORY_BASELINES
 
 # A cell small enough to run in a test and large enough to mean something. The
@@ -326,3 +327,70 @@ def test_reading_an_empty_directory_says_so_rather_than_printing_a_blank_table(
 ) -> None:
     assert bench_main(["show", str(tmp_path)]) == 1
     assert "nothing in" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# the metric registry reaches the result files (ADR 0017)
+
+
+def test_a_bench_cell_records_every_family_and_not_only_the_report_card() -> None:
+    """§28 makes accuracy mandatory, so a cell that never asked the model to
+    predict anything could not report three of the four families."""
+    spec = suite(models=("scionarena.reference.baselines:Tier0Only",), cycles=40)
+    result = run_cell(spec, plan(spec)[0])
+
+    assert result.error is None, result.metrics.get("traceback", "")
+    assert result.metrics["coverage.h0"] is not None, "the accuracy family is empty"
+    assert result.metrics["interval_width.h0"] > 0.0
+    assert "swing" in result.metrics and "calls_per_decision" in result.metrics
+
+
+def test_a_point_estimator_scores_none_on_accuracy_rather_than_zero() -> None:
+    """Zero would be a score. The asymmetry between "has no intervals" and
+    "has bad intervals" is the whole point of the family."""
+    spec = suite(models=("minrtt",), cycles=40)
+    result = run_cell(spec, plan(spec)[0])
+
+    assert result.metrics["coverage"] is None
+    assert result.metrics["swing"] is not None
+
+
+def test_the_compliant_share_threshold_is_read_per_regime_and_not_pooled() -> None:
+    """A threshold measured with ten thousand mixing hosts says nothing about a
+    hundred single-path gateways: those two populations are not running the same
+    mechanism, so pooling them averages two different experiments."""
+
+    def cell(population: str, defectors: str, swing: float) -> CellResult:
+        return CellResult(
+            cell_id=f"{population}{defectors}{swing}",
+            suite="t",
+            suite_digest="d",
+            model="m",
+            label="M",
+            mandatory=False,
+            axes={**baseline_cell(), "population": population, "defectors": defectors},
+            repeat=0,
+            seed=1,
+            scenario="s",
+            metrics={"swing": swing},
+        )
+
+    rows = compliant_share_threshold(
+        [
+            cell("1k", "none", 0.2),
+            cell("1k", "10pct", 0.4),
+            cell("1k", "30pct", 3.0),
+            cell("100", "none", 0.1),
+            cell("100", "10pct", 0.1),
+            cell("100", "30pct", 0.2),
+        ],
+        metric="swing",
+        limit=1.0,
+    )
+    by_regime = {r.regime: r for r in rows}
+
+    assert len(by_regime) == 2, "the two regimes were pooled into one threshold"
+    assert by_regime["population=1k, paths=all"].share == 0.7
+    assert by_regime["population=100, paths=all"].held, (
+        "it never breached, so there is no threshold"
+    )

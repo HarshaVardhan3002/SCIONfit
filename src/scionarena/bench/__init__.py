@@ -19,6 +19,7 @@ under it means nothing.
 
 from .axes import AXES, Axis, AxisValue, baseline_cell, settings_for
 from .results import CellResult, cell_id, cell_seed, load_results, write_result
+from .score import Threshold, compliant_share_threshold, regimes
 from .sweep import Cell, SweepSpec, plan, run_cell, run_sweep, summarise
 
 __all__ = [
@@ -28,11 +29,14 @@ __all__ = [
     "Cell",
     "CellResult",
     "SweepSpec",
+    "Threshold",
     "baseline_cell",
     "cell_id",
+    "compliant_share_threshold",
     "cell_seed",
     "load_results",
     "plan",
+    "regimes",
     "run_cell",
     "run_sweep",
     "settings_for",

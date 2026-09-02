@@ -55,6 +55,7 @@ from scionarena.instrument.detectors import (
     oscillation_index,
     warmup_samples,
 )
+from scionarena.instrument.metrics import Forecast, MetricInput, compute
 from scionarena.instrument.sampler import Sampler, Series
 
 __all__ = ["LoopConfig", "LoopResult", "run_loop", "busiest_scopes", "compare"]
@@ -113,6 +114,18 @@ class LoopConfig:
     #: it -- information delay, not decision delay. A model that is infinitely
     #: fast still decides about a world it last saw this long ago.
     telemetry_delay_s: float = 0.0
+    #: Ask the model to ``predict`` each round and record what it said, so the
+    #: accuracy family has something to score (ADR 0017). **Off by default**:
+    #: the call happens inside the turn and is charged as decision latency, so
+    #: turning it on changes what a round costs and therefore what the world
+    #: does while the round runs. ``bench`` turns it on always, because §28
+    #: makes accuracy mandatory; ``demo`` and ``conformance`` leave it off, and
+    #: every M3 and M4 number was recorded with it off.
+    record_forecasts: bool = False
+    #: Horizons asked for, in simulated seconds. Zero is the nowcast. §28's
+    #: forecast question is "does anything beat persistence at +60 s / +300 s",
+    #: which is why those two and not a round number.
+    horizons_s: tuple[float, ...] = (0.0, 60.0, 300.0)
     #: Track this many of the most contested interfaces.
     n_tracked: int = 24
     seed: int = 0
@@ -134,6 +147,10 @@ class LoopResult:
     #: tap rather than by this driver, so its length is set by the episode's
     #: duration and not by what the model's rounds cost.
     series: Series = field(default_factory=lambda: Series(interval_s=1.0))
+    #: What the model forecast, and when. Empty unless
+    #: ``LoopConfig.record_forecasts`` was on; the accuracy metrics return
+    #: ``None`` rather than zero when it is empty.
+    forecasts: list[Forecast] = field(default_factory=list)
     #: Per round, not per sample: mean decision latency of the advisories
     #: published in it. A property of a decision, so it is recorded where
     #: decisions happen rather than on the sample grid.
@@ -283,6 +300,26 @@ class LoopResult:
         tail = self.mean_cost_ms[len(self.mean_cost_ms) // 4 :]
         return float(np.mean(tail)) if tail else float("nan")
 
+    def metric_input(self) -> MetricInput:
+        """The bundle every registered metric reads. Plain data, no substrate."""
+        return MetricInput(
+            series=self.series,
+            latency_s=list(self.latency_s),
+            forecasts=list(self.forecasts),
+            cadence_s=self.cadence_s or self.config.decision_s,
+            sample_s=self.sample_s or self.cadence_s or self.config.decision_s,
+            overruns=self.overruns,
+            wall_clock_s=self.wall_clock_s,
+            session=dict(self.session_summary),
+            hosts=dict(self.hosts_summary),
+        )
+
+    def metrics(self, *, families: Sequence[str] = ()) -> dict[str, float | None]:
+        """Every registered metric (ADR 0017). Not the report card: that is the
+        fixed set M3 was scored on and it stays fixed, so a run recorded before
+        the registry existed still renders."""
+        return compute(self.metric_input(), families=families)
+
     def report(self) -> dict[str, Any]:
         return {
             "model": self.model,
@@ -411,7 +448,7 @@ def run_loop(
         deadline = session.now + cadence
         for cycle in range(cfg.cycles):
             published = len(session.advisories)
-            _turn(model, session, scopes, indices, cfg, cycle, handle)
+            _turn(model, session, scopes, indices, cfg, cycle, handle, result.forecasts)
             if session.now < deadline:
                 session.advance(deadline - session.now)
             else:
@@ -438,11 +475,12 @@ def _turn(
     cfg: LoopConfig,
     cycle: int,
     handle: str,
+    forecasts: list[Forecast] | None = None,
 ) -> None:
     """One decision round: drain what arrived, then let the model act per scope."""
     feed = _drain_by_scope(session, handle)
     for (src, dst), _ in zip(scopes, indices, strict=True):
-        _one_scope(model, session, src, dst, cycle, cfg, feed.get((src, dst), []))
+        _one_scope(model, session, src, dst, cycle, cfg, feed.get((src, dst), []), forecasts)
 
 
 def _calibrate(
@@ -522,6 +560,7 @@ def _one_scope(
     cycle: int,
     cfg: LoopConfig,
     feed: Sequence[Observation],
+    out: list[Forecast] | None = None,
 ) -> None:
     """One model turn on one scope. Everything it learns, it pays for."""
     session.begin_turn()
@@ -538,6 +577,11 @@ def _one_scope(
             observations.extend(_observations(probe, target.path_id, session.now))
 
     model.observe(observations, session.view())
+    if cfg.record_forecasts:
+        # Inside the turn, so the time it takes is charged as decision latency
+        # exactly as ``advise`` is. A model that ships intervals pays for
+        # shipping them (ADR 0017).
+        _forecast(model, session, src, dst, paths, cfg, out if out is not None else [])
     advisory: Advisory = model.advise(session.view(), paths, cfg.sla, cfg.n_hosts)
     offered = {p.path_id for p in paths}
     weights = {k: float(v) for k, v in advisory.normalised().items() if k in offered}
@@ -549,6 +593,43 @@ def _one_scope(
             weights=weights,
             meta={"cycle": cycle, "reason": advisory.reason[:120]},
         )
+
+
+def _forecast(
+    model: PathModel,
+    session: Session,
+    src: str,
+    dst: str,
+    paths: Sequence[PathRef],
+    cfg: LoopConfig,
+    out: list[Forecast],
+) -> None:
+    """Record what the model says will happen, at every horizon it is asked for.
+
+    A model that raises here is a model that cannot forecast, and that is a
+    finding rather than a crash: the ledger simply gains nothing for this round
+    and the accuracy metrics report on what there is.
+    """
+    view = session.view()
+    for horizon in cfg.horizons_s:
+        try:
+            predicted = model.predict(view, list(paths), horizon_s=horizon)
+        except Exception:  # noqa: BLE001 -- a model that cannot forecast is a result
+            return
+        now = session.now
+        for path_id, prediction in predicted.items():
+            dist = prediction.latency_ms
+            out.append(
+                Forecast(
+                    t=now,
+                    src=src,
+                    dst=dst,
+                    path_id=str(path_id),
+                    horizon_s=float(horizon),
+                    point=float(dist.point),
+                    quantiles={float(k): float(v) for k, v in (dist.quantiles or {}).items()},
+                )
+            )
 
 
 def _drain_by_scope(session: Session, handle: str) -> dict[tuple[str, str], list[Observation]]:

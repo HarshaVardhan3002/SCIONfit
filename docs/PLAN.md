@@ -283,44 +283,62 @@ two models that disagreed fourfold. Deduplication is on the resolved import path
 
 ---
 
-## Phase 3 — the metric registry
+## Phase 3 — the metric registry — **landed**
 
-M4's remaining deliverables, plus what §28 requires. This is what the graphs are *of*, and
-it is worth being explicit that **there is no loss curve here** — the harness evaluates
-trained models, it does not train them. The four families below are the axes of the report.
+`instrument/metrics.py`. Twenty-three metrics in the four families §28 names, registered by
+decorator so a new one is a new function and nothing else — M4's acceptance criterion.
+`scionarena bench metrics` lists them. There is no loss curve and there is not meant to be:
+the harness evaluates trained models, it does not train them.
 
-**Accuracy.** Pinball loss, CRPS, and interval coverage against nominal — reported
-stratified, never as a single number. The stratification that matters is by evidence
-sparsity and by horizon, because a mean over strata hides exactly the case the model is
-worst at.
+**The gap that had to be closed first.** The closed loop never called `predict`. It called
+`observe` and `advise`, so there was no forecast to score, no realised outcome to score it
+against, and pinball loss, CRPS and interval coverage were *unimplementable* rather than
+unimplemented. The harness could not have told a well-calibrated model from a confidently
+wrong one in any run it has ever done. `LoopConfig.record_forecasts` now asks the model to
+predict at `{0, +60, +300}` s each round, **inside the turn**, so a model that ships
+intervals pays for shipping them. Off by default — it changes what a round costs, and every
+M3 and M4 number was recorded with it off — and on always in `bench`.
 
-**Decision quality.** True regret against the hindsight-optimal assignment. This is the
-family that separates the project from every SCION benchmark that exists: a model can
-predict accurately and route badly, and only this number sees it. Report it beside accuracy,
-never merged with it.
+**Accuracy** is stratified by construction, not by convention: a metric returns a mapping
+and `compute` flattens it into `name.h0` / `name.h60` / `name.h300`. There is nowhere for a
+mean over horizons to go. Coverage is reported against nominal 0.8 with `interval_width`
+beside it, because a model that predicts (0, 10⁶) covers everything and knows nothing.
+`conformal_drift` is §19.5's rule exactly — `α_{t+1} = α_t + η(target − hit)` — which
+assumes no exchangeability, and that matters here specifically: observations are biased
+toward the paths the model recommended, so the sequence is not exchangeable by construction.
 
-**Stability.** Oscillation index and `fast_swing` exist (ADR 0010, 0011). Add convergence
-time and the compliant-share threshold — the fraction of the population that must follow
-advice before a mechanism stops working. That threshold is the number every stability
-claim is conditional on, and it must be reported *per regime*, because a threshold measured
-with 10⁴ mixing hosts says nothing about 10² single-path gateways.
+**Decision quality** is regret against the best fixed path, and it is documented as an
+**upper bound** rather than presented as the thing itself. The honest hindsight-optimal is a
+fixed point — move the traffic and the cost of where you moved it changes — and solving an
+equilibrium per sample is a research problem inside a metric. The bound is the same for
+every model on the same world, so the comparison holds even though the level does not.
 
-**Operational.** Decision wall-clock and its distribution, tool calls per decision,
-information gained per unit cost, probe budget consumed, memory retained, and behaviour
-when the budget is exhausted or the deadline missed. Nobody else measures this, and it is
-where an LLM will look dramatically unlike a gradient-boosted regressor. M3 already found
-the shape of it: 257 MiB per decision round for the stochastic model against 21 MiB for the
-greedy one. The retention policy question that raised is answered here.
+**Stability** gained `convergence_s`, which reports `inf` rather than a large number: "settled
+at sample 9,999" and "never settled" are different findings and a large number reads as the
+first. **Operational** covers the decision-time tail, calls per decision, refusals, late
+calls, and `grid_uniform` — carried in the metric set rather than only on the report card,
+because every stability number is invalid without it and a result file read back later has
+no other way to find out.
 
-**Coverage detector.** Already M4 deliverable 2, and v1.2 §19.5 now specifies the update
-rule exactly — `α_{t+1} = α_t + η (target − 1{y_t ∈ C_t})`, adaptive conformal inference,
-long-run coverage on arbitrary sequences with no exchangeability assumption. Run the event
-log, count interval hits per bucket, report trailing coverage. It converts R5 from a shape
-check into a test of the property that matters, and it is small.
+**The compliant-share threshold is not a metric** (`bench/score.py`). A metric is a function
+of one run, and a threshold computed from one run is a threshold with one point in it that
+renders as though it had been measured. It is a function over swept results, read *per
+regime*: a threshold measured with 10⁴ mixing hosts says nothing about 10² single-path
+gateways, because those two populations are not running the same mechanism.
 
-**Registration.** A new metric registers without editing the runner. That is already the M4
-acceptance criterion and it is what lets the registry grow through Phases 5 and 6 without
-churn.
+### What running it turned up
+
+- **A path is named two different ways and the join failed silently.** `instrument` may not
+  import `exposure`, so the path-id rendering is written down twice — and the truth series
+  was keyed on the raw integer while forecasts carried the hex string. They never joined,
+  every accuracy metric reported `None`, and nothing failed.
+  `test_the_truth_series_is_keyed_the_way_a_model_names_a_path` is what now keeps them equal.
+- **Filtering two series for finite values separately still subtracts.** Realised and best
+  cost were each filtered on their own, leaving arrays of different lengths whose difference
+  was between samples taken at different instants. Paired now, sample by sample.
+- **`Tier0Only` is over-confident and the family caught it on the first run**: coverage 0.34
+  against a nominal 0.8, at every horizon. That is the accuracy family doing exactly what it
+  exists for, on the day it was built.
 
 ---
 

@@ -114,6 +114,9 @@ class SweepSpec:
     n_tracked: int = 24
     step_s: float = 1.0
     identity_policy: str = "structural"
+    #: Forecast horizons, in simulated seconds. §28 asks "does anything beat
+    #: persistence at +60 s / +300 s", which is why those two beside the nowcast.
+    horizons_s: tuple[float, ...] = (0.0, 60.0, 300.0)
     #: Which axes to move. Empty means all of them.
     only: tuple[str, ...] = ()
     baseline: Mapping[str, str] = field(default_factory=baseline_cell)
@@ -174,6 +177,7 @@ class SweepSpec:
                     "scopes": self.scopes,
                     "step_s": self.step_s,
                     "identity_policy": self.identity_policy,
+                    "horizons_s": list(self.horizons_s),
                     "baseline": dict(self.baseline),
                     "axes": [AXES[n].to_dict() for n in self.axis_names],
                 }
@@ -250,6 +254,11 @@ def _config(spec: SweepSpec, cell: Cell, seed: int) -> LoopConfig:
             decision_s=spec.decision_s,
             n_tracked=spec.n_tracked,
             seed=seed,
+            # Always on here, and off everywhere else (ADR 0017). §28 makes
+            # accuracy mandatory, so a benchmark cell that did not ask the model
+            # to predict anything could not report three of the four families.
+            record_forecasts=True,
+            horizons_s=spec.horizons_s,
         ),
         **loop,
     )
@@ -289,7 +298,10 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
                 "so no model could differ from any other here"
             )
         loop = run_loop(model, scenario, scopes, config=_config(spec, cell, seed), world=world)
-        result.metrics = dict(loop.report())
+        # The report card is M3's fixed set and stays fixed so an old result
+        # still renders; the registry is what a report reads (ADR 0017), and a
+        # metric it could not measure is None rather than zero.
+        result.metrics = {**loop.report(), **loop.metrics()}
         result.wall_clock_s = loop.wall_clock_s
     except Exception as exc:  # noqa: BLE001 -- a failed cell is a recorded result
         result.error = f"{type(exc).__name__}: {exc}"

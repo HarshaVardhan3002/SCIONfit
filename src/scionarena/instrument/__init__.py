@@ -25,18 +25,35 @@ from scionarena.instrument.detectors import (
     spectrum,
     warmup_samples,
 )
-from scionarena.instrument.sampler import Sampler, Series
+from scionarena.instrument.metrics import (
+    FAMILIES,
+    REGISTRY,
+    Forecast,
+    Metric,
+    MetricInput,
+    compute,
+    metric,
+)
+from scionarena.instrument.sampler import Sampler, Series, path_name
 
 __all__ = [
+    "FAMILIES",
     "FAST_BAND_MAX_ROUNDS",
     "FAST_BAND_MIN",
+    "REGISTRY",
     "WARMUP",
+    "Forecast",
+    "Metric",
+    "MetricInput",
     "Sampler",
     "Series",
     "band_min",
+    "compute",
     "dominant_period",
     "fast_swing",
     "flap_rate",
+    "metric",
+    "path_name",
     "oscillation_index",
     "spectrum",
     "warmup_samples",
