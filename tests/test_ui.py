@@ -182,6 +182,15 @@ def test_models_can_be_given_as_a_string() -> None:
 
 
 def test_a_failing_run_is_recorded_rather_than_killing_the_worker() -> None:
+    """Also pins the order the worker publishes in.
+
+    ``state`` is what this loop -- and the browser's poller, and /api/status --
+    waits on, so it has to be assigned *after* the traceback. Setting it first
+    published a job that said it had failed and could not yet say why, and a
+    reader landing between the two lines got an empty ``error``. That is a real
+    HTTP-visible window, not just a flaky test; it showed up here as one failure
+    in a full-suite run that passed five times in isolation.
+    """
     jobs = Jobs()
     job = jobs.start({**_params(TINY), "models": ["no-such-model"]})
     for _ in range(600):

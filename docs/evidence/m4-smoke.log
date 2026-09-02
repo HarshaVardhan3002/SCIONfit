@@ -1,7 +1,7 @@
 model                decision_s  sample_s  samples  swing   share_swing  oscillation_index  dominant_period  flap_rate  mean_cost_ms  mean_deviation  mean_latency_s  overruns  grid_uniform  calls  wall_clock_s
 -------------------  ----------  --------  -------  ------  -----------  -----------------  ---------------  ---------  ------------  --------------  --------------  --------  ------------  -----  ------------
-MinRTTGreedy         30          30        240      3.3     0.4796       0.2968             4.08             0.2374     1315          0               1.869           2         True          7681   2.135       
-ReferenceStochastic  30          30        240      0.5457  0.0983       0.2059             3.17             0.5455     442.2         0.0606          1.44            0         True          7681   8.498       
+MinRTTGreedy         30          30        240      3.3     0.4796       0.2968             4.08             0.2374     1315          0               1.869           2         True          7681   2.323       
+ReferenceStochastic  30          30        240      0.5457  0.0983       0.2059             3.17             0.5455     442.2         0.0606          1.44            0         True          7681   5.261       
 
 [PASS] greedy link amplitude >= 4x stochastic: 6.05x  (3.300 vs 0.546)
 [PASS] greedy split amplitude >= 4x stochastic: 4.88x  (0.480 vs 0.098)
@@ -10,4 +10,4 @@ ReferenceStochastic  30          30        240      0.5457  0.0983       0.2059 
 [PASS] samples sit on an exact grid, so the spectra mean something: 240 at 30s, jitter 0s, 240 at 30s, jitter 0s
 [----] rounds the model finished inside its decision slot: 238/240 at 30s, 240/240 at 30s
 
-wrote docs\evidence\m4-smoke\report.html in 11.3s
+wrote docs\evidence\m4-smoke\report.html in 8.14s

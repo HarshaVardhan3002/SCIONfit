@@ -5,10 +5,10 @@
     "cycles": 240,
     "hosts_per_scope": 200,
     "seed": 7,
-    "wall_clock_s": 11.3,
+    "wall_clock_s": 8.14,
     "digests": {
-      "MinRTTGreedy": "aa669168822232e3c2a3a9b94f8e18ae",
-      "ReferenceStochastic": "3fe2d1ab018616d5d4d15cc41796bd54"
+      "MinRTTGreedy": "7ec25134881b53e8d7c8fd4a650b0ce7",
+      "ReferenceStochastic": "d2bea42620eadc197e68c1cb7d563d23"
     }
   },
   "runs": [
@@ -34,8 +34,8 @@
       "grid_uniform": true,
       "grid_jitter_s": 0.0,
       "calls": 7681,
-      "wall_clock_s": 2.135,
-      "digest": "aa669168822232e3c2a3a9b94f8e18ae"
+      "wall_clock_s": 2.323,
+      "digest": "7ec25134881b53e8d7c8fd4a650b0ce7"
     },
     {
       "model": "ReferenceStochastic",
@@ -59,8 +59,8 @@
       "grid_uniform": true,
       "grid_jitter_s": 0.0,
       "calls": 7681,
-      "wall_clock_s": 8.498,
-      "digest": "3fe2d1ab018616d5d4d15cc41796bd54"
+      "wall_clock_s": 5.261,
+      "digest": "d2bea42620eadc197e68c1cb7d563d23"
     }
   ],
   "verdicts": [

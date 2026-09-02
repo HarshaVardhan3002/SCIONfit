@@ -121,8 +121,12 @@ class Jobs:
         except Cancelled:
             job.state, job.label = "cancelled", "stopped"
         except Exception:  # a broken scenario is a result, not a dead server
-            job.state, job.label = "error", "failed"
+            # The traceback goes on before the state does. ``state`` is what a
+            # poller waits on, so assigning it first publishes a job that says
+            # it failed and cannot yet say why -- a reader that looks in the
+            # window between the two lines gets an empty ``error`` over HTTP.
             job.error = traceback.format_exc(limit=6)
+            job.state, job.label = "error", "failed"
         else:
             rows = [r.report() for r in results]
             checks = verdicts(results)

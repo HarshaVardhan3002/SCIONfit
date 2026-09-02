@@ -1,0 +1,13 @@
+$ python docs/evidence/b1_identity_churn.py
+
+beacon interval         interval_s   identifiers   paths   re-signings   structural
+------------------------------------------------------------------------------------
+assumed (M1-M4)               300s           296       6          1146          6/6
+upstream (corrected)            5s          6674       6         47096          6/6
+
+6000s, identity_policy=crypto_bound, seed 7, smoke tier
+a model keyed on path_id sees 6674 distinct identifiers where it saw 296: 22.5x
+re-signings 47096 against 1146: 41x
+
+Structural ids are unchanged in both. The interface sequences never moved, so
+this is what a model keyed on the wrong identifier loses -- not what SCION does.
