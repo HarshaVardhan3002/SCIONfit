@@ -514,6 +514,45 @@ The pre-flight found two false declarations within minutes of existing, both on 
 docstring says it is deliberately blind, and the worked adaptor claimed `emits_assignment`
 while returning a softmax concentrated enough to be a ranking.
 
+### Thinking was free, and the whole comparison rests on it not being
+
+Invariant 3 says a decision taking 800 ms is applied 800 ms late. It was implemented for
+tool latency and **not for compute**: simulated time advanced only from a tool's modelled
+cost and from an explicit `advance()`, so a model that spent ten seconds in `predict` and
+called nothing had a decision latency of zero. `Session` took `charge_real_time` and
+`stopwatch` for exactly this, assigned both and read neither.
+
+That is not a footnote for this project. The headline comparison is a tool-using language
+model that decides in seconds against classical models that decide in microseconds; the
+objection to language models is a budget rather than an opinion, and the budget is the
+metric. With thinking free the comparison is measured wrong, **in the direction that
+flatters the language model** — the one direction a benchmark cannot afford, because it is
+the direction it would be accused of.
+
+ADR 0021 adds `think`: `free` (default, what every recorded number predates), `fixed`
+(deterministic, and how to ask "what if it took two seconds" as a controlled change), and
+`measured` (faithful, and *does not reproduce across machines*). Verified: `free` and
+`fixed` each reproduce their trace digest; `measured` gave three distinct digests from
+three runs. That tension between invariants 3 and 4 is irreducible, so the run records
+which side it took and the report says so.
+
+### The fifth architecture, and what it costs — **landed**
+
+`gbdt`, a histogram gradient-boosted regressor that **refits inside the loop** from its own
+observations. There is no artefact to ship — an ensemble for this network has to be fitted
+on this network — and a deployed one would be refitted from its own telemetry anyway. First
+sweep against all five mandatory baselines, smoke tier, staleness axis:
+
+| | GradientBoosted | best baseline |
+|---|---|---|
+| `coverage.h60` (nominal 0.8) | **0.55–0.65** | 0.23–0.33 (`Tier0Only`) |
+| `decision_p95_s` | **5.4–6.9 s** | 3.3–4.4 s |
+| `regret_ratio` | 4.9–23.2 | 1.25–1.65 (`EMAOracle`) |
+
+Best-calibrated model in the suite, slowest by 2–3 seconds, and worse at choosing. A
+coherent profile, and the shape of result the four families exist to separate. The latency
+*is* the refit, and under `think="free"` it would have been invisible.
+
 ### The comparison is confounded, and the fix is one parameter
 
 `ToolUsingModel` inherits `PathModel`, so an agentic model implements the four fixed-cycle
