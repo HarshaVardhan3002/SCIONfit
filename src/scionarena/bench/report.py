@@ -182,6 +182,9 @@ class ReportData:
     architecture: dict[str, str] = field(default_factory=dict)
     #: display name -> the drive that produced it (ADR 0019).
     drive_of: dict[str, str] = field(default_factory=dict)
+    #: Compute-charging policies seen across the cells (ADR 0021). More than one
+    #: means the directory holds two different experiments.
+    think_seen: list[str] = field(default_factory=list)
     #: display name -> the model's own label, which the two halves of a parity
     #: pair share. One model run twice is one variant, and counting the rows
     #: instead would let a tag reach the variant threshold on a duplicate.
@@ -325,6 +328,8 @@ def gather(results: Sequence[CellResult]) -> ReportData:
             data.architecture.setdefault(name, str(cell.capabilities.get("architecture", "")))
         if cell.drive:
             data.drive_of.setdefault(name, cell.drive)
+        if cell.think and cell.think not in data.think_seen:
+            data.think_seen.append(cell.think)
         data.bare_of.setdefault(name, cell.label)
         data.seeds.setdefault(f"{name} @ {_where(cell.axes)} #{cell.repeat}", cell.seed)
         if cell.refused:
@@ -993,6 +998,28 @@ def _limits(story: list[Any], sheet: Any, data: ReportData) -> None:
         "This evaluates trained models; it does not train them, and a model's own learning "
         "dynamics are outside what any cell recorded.",
     ]
+    if "measured" in data.think_seen:
+        points.append(
+            "<b>The decision times are this machine's.</b> This run charged the model's own "
+            "compute to the simulated clock, so a slower or faster machine produces a "
+            "different run &mdash; not merely a different measurement of the same run. That is "
+            "the price of measuring what a model actually costs, and it is why the suite does "
+            "not do it by default."
+        )
+    elif data.think_seen and "free" in data.think_seen:
+        points.append(
+            "<b>Thinking was free here.</b> Only time spent inside tools moved the clock, so a "
+            "model that deliberates for seconds and probes nothing was applied as though it "
+            "had answered instantly. Fine for models that decide in microseconds; misleading "
+            "for one that does not."
+        )
+    if len(data.think_seen) > 1:
+        points.append(
+            "<b>These cells were not all charged the same way</b> ("
+            + _escape(", ".join(sorted(data.think_seen)))
+            + "). A cell that paid for its thinking and one that did not are two different "
+            "experiments, and any column holding both compares nothing."
+        )
     drives = {d for d in data.drive_of.values() if d}
     if "fixed" in drives:
         points.append(

@@ -148,6 +148,15 @@ class SweepSpec:
     #: quietly running the fixed cycle twice, and the refusal costs nothing
     #: because it happens before the world is built.
     drive: str = "auto"
+    #: What a decision's own compute costs (ADR 0021): ``free``, ``fixed`` or
+    #: ``measured``. ``free`` is the default and is what every recorded number
+    #: predates this setting under; moving it earlier would invalidate the whole
+    #: existing baseline set for a difference of microseconds. It is the setting
+    #: to change once there is a model whose thinking is worth charging, and a
+    #: ``measured`` suite does not reproduce across machines.
+    think: str = "free"
+    #: Simulated seconds per model call under ``think="fixed"``.
+    think_s: float = 0.0
     #: Which axes to move. Empty means all of them.
     only: tuple[str, ...] = ()
     baseline: Mapping[str, str] = field(default_factory=baseline_cell)
@@ -156,6 +165,8 @@ class SweepSpec:
     def __post_init__(self) -> None:
         if self.mode not in ("oat", "grid"):
             raise ValueError(f"mode must be 'oat' or 'grid', not {self.mode!r}")
+        if self.think not in ("free", "fixed", "measured"):
+            raise ValueError(f"think must be 'free', 'fixed' or 'measured', not {self.think!r}")
         if self.drive not in ("auto", "fixed", "agentic", "both"):
             raise ValueError(
                 f"drive must be 'auto', 'fixed', 'agentic' or 'both', not {self.drive!r}"
@@ -208,6 +219,8 @@ class SweepSpec:
                     "tier": self.tier,
                     "mode": self.mode,
                     "drive": self.drive,
+                    "think": self.think,
+                    "think_s": self.think_s,
                     "cycles": self.cycles,
                     "decision_s": self.decision_s,
                     "scopes": self.scopes,
@@ -307,6 +320,8 @@ def _config(spec: SweepSpec, cell: Cell, seed: int) -> LoopConfig:
             horizons_s=spec.horizons_s,
             # ``both`` sets it per cell; every other setting is suite-wide.
             drive=cell.drive or spec.drive,
+            think=spec.think,
+            think_s=spec.think_s,
         ),
         **loop,
     )
@@ -370,6 +385,7 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
         config = _config(spec, cell, seed)
         try:
             result.drive = resolve_drive(model, config.drive)
+            result.think = config.think
         except ValueError as exc:
             # Not applicable rather than broken, and the distinction is the
             # whole reason a parity sweep can include the five baselines at all.
@@ -385,6 +401,7 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
             )
         loop = run_loop(model, scenario, scopes, config=config, world=world)
         result.drive = loop.drive
+        result.think = loop.think
         # The report card is M3's fixed set and stays fixed so an old result
         # still renders; the registry is what a report reads (ADR 0017), and a
         # metric it could not measure is None rather than zero.

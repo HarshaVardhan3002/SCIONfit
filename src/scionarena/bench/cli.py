@@ -41,6 +41,8 @@ def _spec(args: argparse.Namespace) -> SweepSpec:
         only=tuple(a.strip() for a in (args.axes or "").split(",") if a.strip()),
         include_baselines=not args.no_baselines,
         drive=args.drive,
+        think=args.think,
+        think_s=args.think_s,
     )
 
 
@@ -64,6 +66,22 @@ def _add_suite_args(parser: argparse.ArgumentParser) -> None:
         "way to compare forecasting rather than probing; agentic refuses a model "
         "that cannot act; both runs the parity pair, one world each way, and "
         "doubles the matrix",
+    )
+    parser.add_argument(
+        "--think",
+        default="free",
+        choices=["free", "fixed", "measured"],
+        help="what a decision's own compute costs the world. free charges nothing "
+        "and only tool latency moves the clock; fixed charges --think-s per model "
+        "call and reproduces exactly; measured times the model and is faithful but "
+        "does not reproduce across machines",
+    )
+    parser.add_argument(
+        "--think-s",
+        type=float,
+        default=0.0,
+        dest="think_s",
+        help="simulated seconds per model call under --think fixed",
     )
     parser.add_argument("--axes", default="", help="comma-separated axes to move; default all")
     parser.add_argument(

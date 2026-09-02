@@ -26,7 +26,9 @@ The episode continues, and what the model does about it is the measurement.
 from __future__ import annotations
 
 import random
-from collections.abc import Iterable, Mapping, Sequence
+import time
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -184,8 +186,19 @@ class Session:
         self.advisories: list[dict[str, Any]] = []
         #: Set by a driver before handing control to a tool-using model.
         self.deadline_s: float | None = None
+        #: Whether the model's own compute advances the world (ADR 0021).
+        #: False leaves thinking free, which is what every number recorded
+        #: before that ADR was measured under.
         self.charge_real_time = charge_real_time
+        #: Times the model's code. ``Stopwatch(fixed_s=...)`` makes the charge
+        #: deterministic, which is the only way to charge for thinking and
+        #: still reproduce a run on another machine.
         self.stopwatch = stopwatch if stopwatch is not None else Stopwatch()
+        #: Real seconds spent inside ``call``. Subtracted from a thinking
+        #: window so an agent is charged for its own reasoning and not for time
+        #: spent inside our tool handlers -- otherwise a slow handler reads as
+        #: a slow model, and the number stops meaning what it says.
+        self._tool_real_s = 0.0
         #: Added to every advisory's decision latency. A scenario knob for
         #: "what if the model were slower", which is how the M3 criterion about
         #: a slow model being measurably worse is run as a controlled change.
@@ -263,7 +276,22 @@ class Session:
     # ------------------------------------------------------------------ calls
 
     def call(self, tool: str, **arguments: Any) -> ToolResult:
-        """Run one tool. Charges it, advances the world, logs it, returns it."""
+        """Run one tool. Charges it, advances the world, logs it, returns it.
+
+        The real seconds this takes are accumulated so that a thinking window
+        around it can subtract them (ADR 0021). Only measured when there is
+        something to subtract from, so the default path pays nothing for the
+        accounting.
+        """
+        if not self.charge_real_time:
+            return self._dispatch(tool, **arguments)
+        mark = time.perf_counter()
+        try:
+            return self._dispatch(tool, **arguments)
+        finally:
+            self._tool_real_s += time.perf_counter() - mark
+
+    def _dispatch(self, tool: str, **arguments: Any) -> ToolResult:
         t0 = self.now
         spec = self.tools.get(tool)
         if spec is None:
@@ -391,6 +419,34 @@ class Session:
         self._seq += 1
 
     # --------------------------------------------------------------- the clock
+
+    @contextmanager
+    def thinking(self, what: str = "think") -> Iterator[None]:
+        """Run the model's own code, and charge the world for how long it took.
+
+        This is invariant 3, and until ADR 0021 it was not implemented: the
+        clock advanced only from tool costs, so a model that spent ten seconds
+        in ``predict`` and called nothing had a decision latency of zero and
+        its advice landed as though it had answered instantly.
+
+        The world moves *during* the window, so a later call in the same turn
+        sees a world that moved while the model was thinking about the earlier
+        one. That is the faithful behaviour and it is the point of the
+        invariant.
+
+        A no-op when ``charge_real_time`` is off, measurement included, so the
+        default path costs nothing at all.
+        """
+        if not self.charge_real_time:
+            yield
+            return
+        before = self._tool_real_s
+        with self.stopwatch as sw:
+            yield
+        spent = max(0.0, sw.elapsed_s - (self._tool_real_s - before))
+        t0 = self.now
+        self._advance(spent)
+        self._record("think", t0, what, {"real_s": round(spent, 6)}, True, "", Cost(spent), 0)
 
     def advance(self, dt_s: float) -> None:
         """Let the world run for ``dt_s`` seconds of simulated time.

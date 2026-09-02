@@ -42,6 +42,7 @@ from typing import Any
 
 import numpy as np
 
+from scionarena.core.clock import Stopwatch
 from scionarena.core.hosts import HostParams
 from scionarena.core.scenario import Scenario, Substrate
 from scionarena.exposure.budget import Budget
@@ -129,6 +130,23 @@ class LoopConfig:
     #: Track this many of the most contested interfaces.
     n_tracked: int = 24
     seed: int = 0
+    #: What the model's own compute costs the world (ADR 0021).
+    #:
+    #: ``free`` charges nothing and is what every number recorded before that
+    #: ADR was measured under. ``fixed`` charges ``think_s`` simulated seconds
+    #: per model call, which reproduces exactly and is the way to ask "what if
+    #: this model took two seconds" as a controlled change. ``measured`` times
+    #: the model's own code and advances the world by that much, which is
+    #: faithful and **does not reproduce across machines**.
+    #:
+    #: Until this existed, invariant 3 held only for time spent inside tools: a
+    #: model that thought for ten seconds and called nothing had a decision
+    #: latency of zero. That is the wrong measurement for the comparison this
+    #: harness is for, and it is wrong in the direction that flatters a model
+    #: which thinks slowly.
+    think: str = "free"
+    #: Simulated seconds per model call under ``think="fixed"``.
+    think_s: float = 0.0
     #: Which way to drive the model (ADR 0019).
     #:
     #: ``auto`` honours the model's own ``uses_tools`` declaration, ``fixed``
@@ -153,6 +171,10 @@ class LoopResult:
     model: str
     scenario: str
     config: LoopConfig
+    #: What the model's own compute was charged (ADR 0021). Recorded because
+    #: a ``measured`` cell and a ``free`` cell are not comparable, and a report
+    #: that puts them in one column is comparing two different experiments.
+    think: str = "free"
     #: How the model was actually driven: ``fixed`` or ``agentic``. The
     #: *resolved* value, never the requested one, so a result says which way it
     #: ran rather than which way it was asked to (ADR 0019).
@@ -344,6 +366,7 @@ class LoopResult:
             "model": self.model,
             "scenario": self.scenario,
             "drive": self.drive,
+            "think": self.think,
             "cycles": self.config.cycles,
             "decision_s": round(self.cadence_s, 1),
             "sample_s": round(self.sample_s, 1),
@@ -412,6 +435,8 @@ def run_loop(
     """
     cfg = config or LoopConfig()
     world = world if world is not None else scenario.build()
+    if cfg.think not in ("free", "fixed", "measured"):
+        raise ValueError(f"think must be 'free', 'fixed' or 'measured', not {cfg.think!r}")
     session = Session(
         world,
         budget=budget if budget is not None else Budget.unlimited(),
@@ -419,6 +444,8 @@ def run_loop(
         extra_latency_s=cfg.extra_latency_s,
         telemetry_delay_s=cfg.telemetry_delay_s,
         label=getattr(model.capabilities, "name", "model"),
+        charge_real_time=cfg.think != "free",
+        stopwatch=Stopwatch(fixed_s=cfg.think_s) if cfg.think == "fixed" else Stopwatch(),
     )
 
     indices = [(world.topology.as_index(a), world.topology.as_index(b)) for a, b in scopes]
@@ -427,7 +454,13 @@ def run_loop(
         world.add_scope(a, b, params=_params_for(world, a, b, base, cfg))
 
     drive = resolve_drive(model, cfg.drive)
-    result = LoopResult(model=session.label, scenario=scenario.name, config=cfg, drive=drive)
+    result = LoopResult(
+        model=session.label,
+        scenario=scenario.name,
+        config=cfg,
+        drive=drive,
+        think=cfg.think,
+    )
     tracked = _tracked_ifaces(world, indices, cfg.n_tracked)
 
     model.reset(session.view(), seed=cfg.seed)
@@ -582,7 +615,10 @@ def _agentic_turn(
     session.deadline_s = deadline_s
     try:
         slot = cfg.decision_s if deadline_s is None else max(0.0, deadline_s - session.now)
-        act(session, slot)
+        # The window excludes real time spent inside ``session.call``, so what
+        # is charged is the agent's own reasoning rather than our handlers.
+        with session.thinking("act"):
+            act(session, slot)
     finally:
         session.deadline_s = None
     if not cfg.record_forecasts or forecasts is None:
@@ -590,7 +626,8 @@ def _agentic_turn(
     for src, dst in scopes:
         paths = session.known_paths(src, dst)
         if paths:
-            _forecast(model, session, src, dst, paths, cfg, forecasts)
+            with session.thinking("predict"):
+                _forecast(model, session, src, dst, paths, cfg, forecasts)
 
 
 def _calibrate(
@@ -697,13 +734,17 @@ def _one_scope(
             probe = session.call("probe_path", path_id=target.path_id, kind="latency")
             observations.extend(_observations(probe, target.path_id, session.now))
 
-    model.observe(observations, session.view())
+    with session.thinking("observe"):
+        model.observe(observations, session.view())
     if cfg.record_forecasts:
         # Inside the turn, so the time it takes is charged as decision latency
         # exactly as ``advise`` is. A model that ships intervals pays for
-        # shipping them (ADR 0017).
-        _forecast(model, session, src, dst, paths, cfg, out if out is not None else [])
-    advisory: Advisory = model.advise(session.view(), paths, cfg.sla, cfg.n_hosts)
+        # shipping them (ADR 0017), and since ADR 0021 it pays in simulated
+        # seconds rather than only in ours.
+        with session.thinking("predict"):
+            _forecast(model, session, src, dst, paths, cfg, out if out is not None else [])
+    with session.thinking("advise"):
+        advisory: Advisory = model.advise(session.view(), paths, cfg.sla, cfg.n_hosts)
     offered = {p.path_id for p in paths}
     weights = {k: float(v) for k, v in advisory.normalised().items() if k in offered}
     if weights:

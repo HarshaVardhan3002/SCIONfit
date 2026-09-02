@@ -125,6 +125,11 @@ class CellResult:
     #: handed observations by the driver, and a cell that does not say which
     #: cannot be compared with a cell that ran the other way.
     drive: str = ""
+    #: What the model's own compute was charged (ADR 0021): ``free``, ``fixed``
+    #: or ``measured``. Recorded because a ``measured`` cell is machine-
+    #: dependent and a ``free`` cell charges nothing for thinking, so the two
+    #: are different experiments and a column holding both compares nothing.
+    think: str = ""
     #: What the substrate was when this ran. Recorded, not enforced: forcing a
     #: re-run on a mismatch would invalidate a week of stress-tier results that
     #: may be exactly what somebody wants to compare against.
@@ -158,6 +163,7 @@ class CellResult:
             "tier": self.tier,
             "capabilities": dict(self.capabilities),
             "drive": self.drive,
+            "think": self.think,
             "substrate_digest": self.substrate_digest,
             "metrics": dict(self.metrics),
             "wall_clock_s": round(self.wall_clock_s, 4),
@@ -180,6 +186,7 @@ class CellResult:
             "tier",
             "capabilities",
             "drive",
+            "think",
             "substrate_digest",
             "metrics",
             "wall_clock_s",
