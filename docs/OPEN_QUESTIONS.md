@@ -129,3 +129,24 @@ and they are both the authors of the incumbent Path Oracle and the source of dat
 
 **Recommendation.** Talk to them before publishing anything comparative. The framing should
 be that the two benchmarks measure different things, because they do.
+
+## Q9 — Which robust filter is "Tier-0" for the purposes of a baseline? · OPEN · affects M6
+
+Master Spec §19.1 specifies Tier-0 as "online robust filters, always-on" — t-digest
+quantile trackers at 1 min / 10 min / 6 h plus a Student-t state-space filter per directed
+edge, servable with inflated intervals, with no spatial transfer and no forecast head. §28
+then makes **Tier-0-only** one of the five mandatory accuracy baselines.
+
+What it does not say is which of those a *baseline implementation* should be, and the
+choice moves the number every model is scored against. A t-digest at three horizons and a
+Student-t filter are not the same floor, and "the Tier-1 lift" is the difference between
+the model and whichever one was used.
+
+**Assumed provisionally.** `reference/baselines.py::Tier0Only` is a rolling median over a
+bounded window with the interquartile range as its interval. It keeps the two properties
+the spec is leaning on — robustness to heavy-tailed observation noise, and an interval that
+widens when the evidence is thin — and it is deliberately the cheapest thing that has them.
+
+**What would settle it.** The netsys-lab Tier-0 implementation, or a statement of which
+filter the published Tier-1 deltas were measured against. Until then a reported Tier-1 lift
+is conditional on this choice and the report has to say so.

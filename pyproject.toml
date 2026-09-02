@@ -59,7 +59,10 @@ ignore = ["E501", "B008", "C408", "SIM105", "SIM108"]
 # is the 3.11 leg of the CI matrix, which type-checks on a 3.11 interpreter, plus
 # ruff's target-version above.
 strict = true
-files = ["src/scionarena/core", "src/scionarena/exposure"]
+# bench joins the strict list because it was written strict-clean and the
+# result files it produces are the input to every number downstream. The
+# rest of the tree stays best-effort, per CLAUDE.md.
+files = ["src/scionarena/core", "src/scionarena/exposure", "src/scionarena/bench"]
 
 [tool.importlinter]
 root_package = "scionarena"

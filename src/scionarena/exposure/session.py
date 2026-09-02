@@ -169,6 +169,7 @@ class Session:
         charge_real_time: bool = False,
         stopwatch: Stopwatch | None = None,
         extra_latency_s: float = 0.0,
+        telemetry_delay_s: float = 0.0,
         label: str = "session",
     ) -> None:
         self._world = world
@@ -189,6 +190,13 @@ class Session:
         #: "what if the model were slower", which is how the M3 criterion about
         #: a slow model being measurably worse is run as a controlled change.
         self.extra_latency_s = extra_latency_s
+        #: How long a telemetry record waits between being produced and being
+        #: readable. *Information* delay, which is a different axis from the
+        #: decision delay above: a model can be infinitely fast and still be
+        #: deciding about a world it last saw thirty seconds ago. Records are
+        #: still charged when they arrive, because the bandwidth was spent
+        #: whether or not the model may look yet.
+        self.telemetry_delay_s = telemetry_delay_s
 
         self._rng = random.Random(seed)
         self._seq = 0
@@ -714,6 +722,11 @@ class Session:
         sub = self.subscriptions.get(handle)
         if sub is None:
             return []
+        if self.telemetry_delay_s > 0.0 and sub.stream == "telemetry":
+            ready_at = self.now - self.telemetry_delay_s
+            out = [e for e in sub.queue if e.t <= ready_at]
+            sub.queue = [e for e in sub.queue if e.t > ready_at]
+            return out
         out = list(sub.queue)
         sub.queue.clear()
         return out

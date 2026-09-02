@@ -3,7 +3,8 @@
 Each front-end owns its own parser and is dispatched to with the remaining
 argv untouched, so ``scionarena conformance check reference`` and
 ``python -m scionarena.conformance.cli check reference`` are the same command.
-Front-ends are registered here as they land; only ``conformance`` exists.
+Front-ends are registered here as they land; ``conformance`` and ``bench``
+exist.
 ``demo``, ``ui`` and ``models`` are not front-ends -- the first two are the M3
 result, in one command and in a browser respectively, and the third answers
 "will my model load, and what will it be tested on?" without running anything.
@@ -18,6 +19,7 @@ import sys
 
 FRONTENDS = {
     "conformance": "can this model represent what deployment requires?",
+    "bench": "score a model across every axis, against the mandatory baselines",
     "demo": "run two models over one scenario and render what they did",
     "ui": "the same, from a browser, with the knobs exposed",
     "models": "load a model and print what it declares, without running anything",
@@ -46,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if frontend == "models":
         return models_main(rest)
+
+    if frontend == "bench":
+        from .bench.cli import main as bench_main
+
+        return bench_main(rest)
 
     if frontend == "demo":
         from .demo import main as demo_main

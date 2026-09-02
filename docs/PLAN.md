@@ -225,46 +225,61 @@ ruling-out runs: `docs/evidence/substrate_step_process_ageing.py`.
 
 ---
 
-## Phase 2 — the sweep engine (`bench/`, M6)
+## Phase 2 — the sweep engine (`bench/`, M6) — **landed**
 
-`src/scionarena/bench/__init__.py` is six lines. This is where the "automated stress-test
-sweep" lives.
+`src/scionarena/bench/` is the automated stress-test sweep: a user names their model and
+gets it scored across every axis, beside the five mandatory baselines, in one command.
 
-**Axes.** The five from Master Spec §28 and its M4½, which are also the axes we already
-half-own:
+```
+scionarena bench axes                        # what gets varied, and how
+scionarena bench plan  --models mypkg:Model  # what would run, for free
+scionarena bench run   --models mypkg:Model --tier dev --out results/
+scionarena bench show  results/
+```
 
-| axis | range | status |
-|---|---|---|
-| population size | 10²–10⁴ selectors | have — `HostParams.n_hosts`, multinomial sampling |
-| defector fraction | 0–100 % | partial — `defector_fraction` exists, one kind (`greedy`) only |
-| mechanism ladder | point-rankings → +intervals → +discipline → +jittered mirror | partial — rungs 1–2 only |
-| paths per selector | 1 … k | missing — hosts always sample a distribution |
-| staleness | information delay, not decision delay | nearly — `extra_latency_s` and `decision_s` exist, telemetry delivery delay does not |
+**The six axes all exist now.** Population, defector fraction, the mechanism ladder, paths
+per selector, staleness, probe-limit regime. Two of them had to be built:
 
-Plus, after Phase 0, **probe rate-limit regime** as a sixth axis, because Q6 made it a
-scenario parameter rather than a constant.
+- **The mechanism ladder** (ADR 0015). Rungs 3 and 4 were missing and rung 3 is the one
+  that decides whether the benchmark measures anything a deployment would recognise. Six
+  knobs on `HostParams` — `k_paths`, `eps_set`, `hysteresis`, `dwell_s`, `timer_jitter`,
+  `mirror_jitter_s` — every one defaulting to what existed before it, every one an operator
+  on count arrays rather than an object per host. Paths-per-selector turned out to be the
+  same operation as the ε-set, which is why that axis came free.
+- **Staleness** was half-missing: only decision delay existed. `telemetry_delay_s` on the
+  session withholds a record until it is that old, so a model can be infinitely fast and
+  still be deciding about a world it last saw two minutes ago.
 
-Four of the six are done or close. The two missing ones are the same item:
+**The engine** (ADR 0016) varies one axis at a time around a named baseline — sixteen
+points rather than the grid's 1,458 — writes one JSON file per cell named by a digest of
+what produced it, and runs the cells in a process pool. Resumable, mergeable across
+machines, and a cell that fails is a recorded result rather than a dead sweep. Seeds come
+from the cell, never from a counter, because execution order under a pool is not
+deterministic.
 
-**The selector-discipline rung is the highest-value unbuilt thing in the repository.**
-ε-set width, hysteresis margin, minimum dwell, per-host timer jitter, in `HostParams`. The
-seam is already where it needs to be — `HostParams.resample_s` is a minimum dwell in all
-but name, and `_thin` already carries placed hosts across rounds. Rung 4, the jittered
-mirror, is delivery jitter on advisory application, which currently lands instantly and
-simultaneously for every host. Paths-per-selector is cheaper than it looks: a selector that
-picks one path is a population of size one sampling the advisory, so it is a constraint on
-the draw rather than a new mechanism.
+**The floor is not optional.** Persistence, Tier-0-only, static-only, latest-sample and
+EWMA are appended to whatever models were asked for and marked `mandatory`. Three were
+written (`reference/baselines.py`); `Tier0Only` is an interpretation of §19.1 and carries
+`ASSUMPTION(Q9)`.
 
-**Engine.** Scenario matrix × models, executed in parallel, resumable after interruption,
-writing one result file per cell carrying the seed, the substrate version digest, the
-scenario, and the full metric set. Two machines running the same suite produce identical
-scores — that is M6's gate and it is what makes the benchmark citable.
+### Three things the plan did not anticipate, all found by running it
 
-**Mandatory baselines.** §28 requires that accuracy be reported against persistence,
-Tier-0-only, static-only, latest-sample and EWMA. Every sweep runs them whether the user
-asked or not, and the report shows the user's model beside them. A model that does not beat
-persistence has not earned a forecast head, and the report should say so in those words.
-`CapacityProportional` already gives us the efficiency floor.
+- **A sweep under about a hundred rounds measures nothing.** The stability detectors take a
+  warmup and then measure a band. Same model, same cell, dev tier: 40 rounds reported a
+  swing of **0.00**, 120 reported 2.79, 240 reported 2.77. A short suite is not a fast
+  suite, it is a green one. `cycles` defaults to 120 and says why.
+- **The headline metric is bimodal across seeds.** `EMAOracle` on six worlds of one cell:
+  2.29 0.32 2.26 0.39 0.30 2.44 — standard deviation equal to the mean — while
+  `CapacityProportional` gave 0.06 ± 0.02 on the same six. The suite discriminates on one
+  repeat; the magnitude is not estimable from one. `repeats` defaults to 3 and `show`
+  reports a median with the range beside it, because a mean of that describes no run.
+- **The population axis did nothing.** The driver sizes each scope against the spare
+  capacity of its best path and overwrites `HostParams.n_hosts` while doing it, so an axis
+  written onto the scenario was silently ignored. It belongs on `LoopConfig`.
+
+Also fixed: `ema` and `scionarena.reference.models:EMAOracle` are the same model under two
+names, and deduplicating on the spec string ran it twice under two seeds and printed it as
+two models that disagreed fourfold. Deduplication is on the resolved import path.
 
 ---
 

@@ -109,6 +109,10 @@ class LoopConfig:
     target_load: float | None = 0.9
     #: Injected on top of whatever the model's own calls cost it.
     extra_latency_s: float = 0.0
+    #: The staleness axis. How long telemetry waits before the model may read
+    #: it -- information delay, not decision delay. A model that is infinitely
+    #: fast still decides about a world it last saw this long ago.
+    telemetry_delay_s: float = 0.0
     #: Track this many of the most contested interfaces.
     n_tracked: int = 24
     seed: int = 0
@@ -356,6 +360,7 @@ def run_loop(
         budget=budget if budget is not None else Budget.unlimited(),
         seed=cfg.seed,
         extra_latency_s=cfg.extra_latency_s,
+        telemetry_delay_s=cfg.telemetry_delay_s,
         label=getattr(model.capabilities, "name", "model"),
     )
 
