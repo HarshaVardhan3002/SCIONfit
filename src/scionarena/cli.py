@@ -23,6 +23,7 @@ FRONTENDS = {
     "demo": "run two models over one scenario and render what they did",
     "ui": "the same, from a browser, with the knobs exposed",
     "models": "load a model and print what it declares, without running anything",
+    "adapt": "call a model against synthetic input and say what would break, in seconds",
 }
 
 
@@ -48,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if frontend == "models":
         return models_main(rest)
+
+    if frontend == "adapt":
+        return adapt_main(rest)
 
     if frontend == "bench":
         from .bench.cli import main as bench_main
@@ -105,6 +109,83 @@ def models_main(argv: list[str]) -> int:
 
     report = capability_report(model, args.spec)
     print(report.to_json() if args.json else report.to_terminal())
+    return 0
+
+
+def adapt_main(argv: list[str]) -> int:
+    """``scionarena adapt <spec>`` -- the thirty-second check (ADR 0020).
+
+    ``models`` says whether it loads and what it claims. This actually calls it:
+    reset, observe, predict, advise, against a topology made of five dataclasses
+    and no substrate at all. It finds a transposed array, a mapping returned as
+    a list, or weights keyed on something that is not a path id, in the second
+    after you wrote them rather than in cell one of ninety.
+
+    Exit codes are the point of the command: 0 when nothing would break, 1 when
+    something would. It is deliberately not a verdict on the model -- an
+    unchecked declaration is neither a pass nor a failure, and the count of them
+    prints beside the rest so the summary cannot be read as a score.
+    """
+    from .exposure.precheck import CONTRADICTED, precheck
+
+    parser = argparse.ArgumentParser(
+        prog="scionarena adapt",
+        description=(
+            "Put a model through the contract against synthetic input. Seconds, "
+            "no substrate, no verdict -- run 'scionfit check' for the check that decides."
+        ),
+        epilog="a spec is a built-in name, 'my.module:MyModel', or './my_adaptor.py:MyAdaptor'",
+    )
+    parser.add_argument("spec")
+    parser.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="constructor argument, repeatable; values are parsed as JSON, then as text",
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="also fail on a declaration the behaviour contradicted, not only on "
+        "something that would stop a cell running",
+    )
+    args = parser.parse_args(argv)
+
+    kwargs: dict[str, object] = {}
+    for item in args.arg:
+        name, _, raw = item.partition("=")
+        try:
+            kwargs[name] = json.loads(raw)
+        except json.JSONDecodeError:
+            kwargs[name] = raw
+
+    report = precheck(args.spec, kwargs)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "spec": report.spec,
+                    "name": report.name,
+                    "architecture": report.architecture,
+                    "load_error": report.load_error,
+                    "checks": [
+                        {"name": c.name, "state": c.state, "detail": c.detail}
+                        for c in report.checks
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        for line in report.lines():
+            print(line)
+
+    if report.load_error or report.blocking:
+        return 1
+    if args.strict and report.by_state(CONTRADICTED):
+        return 1
     return 0
 
 

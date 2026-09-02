@@ -81,7 +81,12 @@ class Cell:
     def describe(self) -> str:
         moved = {k: v for k, v in self.axes.items() if v != AXES[k].values[0].label}
         where = ", ".join(f"{k}={v}" for k, v in sorted(moved.items())) or "baseline"
-        return f"{self.model} @ {where}"
+        # The drive only when a parity sweep set it, because otherwise a plan
+        # under ``drive="both"`` prints every cell twice, identically, and the
+        # one thing a reader needs from it -- that these are two runs -- is the
+        # one thing it does not say.
+        how = f" [{self.drive}]" if self.drive else ""
+        return f"{self.model}{how} @ {where}"
 
 
 @dataclass(frozen=True, slots=True)

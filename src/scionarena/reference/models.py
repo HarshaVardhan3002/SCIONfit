@@ -186,6 +186,11 @@ class CapacityProportional:
             emits_assignment=True,
             handles_unseen_interfaces=True,
             composes_unseen_paths=True,
+            # Explicit because the field defaults to True, and this model's own
+            # docstring says it is blind: observe() is a pass and predict()
+            # reads only the topology. The pre-flight caught the inherited
+            # default on its first run (ADR 0020).
+            stateful=False,
             notes="Static split from beacon-declared capacity. Deliberately blind.",
         )
 

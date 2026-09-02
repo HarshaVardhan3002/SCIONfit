@@ -338,6 +338,10 @@ class Capabilities:
     handles_unseen_interfaces: bool = False  # R4
     composes_unseen_paths: bool = False  # R2
     reports_confidence: bool = False
+    #: Defaults to True, which makes it the one declaration a model can claim
+    #: by not thinking about it. A stateless model must say so explicitly;
+    #: ``scionarena adapt`` checks it behaviourally and found the inherited
+    #: default on a shipped baseline the first time it ran.
     stateful: bool = True
 
     #: Implements ``act`` and drives itself through the tool registry rather

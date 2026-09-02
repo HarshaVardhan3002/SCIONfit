@@ -40,6 +40,7 @@ def _spec(args: argparse.Namespace) -> SweepSpec:
         scopes=args.scopes,
         only=tuple(a.strip() for a in (args.axes or "").split(",") if a.strip()),
         include_baselines=not args.no_baselines,
+        drive=args.drive,
     )
 
 
@@ -53,6 +54,16 @@ def _add_suite_args(parser: argparse.ArgumentParser) -> None:
         choices=["oat", "grid"],
         help="oat varies one axis at a time around the baseline (16 cells); "
         "grid is the cartesian product (1,458 cells)",
+    )
+    parser.add_argument(
+        "--drive",
+        default="auto",
+        choices=["auto", "fixed", "agentic", "both"],
+        help="how to drive each model. auto honours what the model declares; "
+        "fixed puts every model on the same information diet, which is the only "
+        "way to compare forecasting rather than probing; agentic refuses a model "
+        "that cannot act; both runs the parity pair, one world each way, and "
+        "doubles the matrix",
     )
     parser.add_argument("--axes", default="", help="comma-separated axes to move; default all")
     parser.add_argument(
