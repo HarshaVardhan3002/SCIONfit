@@ -18,15 +18,15 @@ The concrete case: a model that always names the single best path scores well on
 
 Three relevant systems exist, all newer than eighteen months, two of them from netsys-lab.
 
-| | ScionPathML | scion-dqn-sim | ietf-scion-testbed |
-|---|---|---|---|
-| What it is | measurement toolkit + real dataset + 5 ML tasks | BRITE topologies + simulated beaconing + DQN selector | a real 12-AS SCION deployment on LXC |
-| Real data | yes, 4 ASes × 4 weeks | no | yes, live |
-| Control plane | no | simulated | real |
-| Link shaping | no | in-model | **real, via `linkd` REST** |
-| Many agents contending | **no** | **no** | not exercised |
-| Closed loop | **no** | **no** | **no** |
-| Model-agnostic interface | no, task-specific | no, DQN hardwired | n/a |
+|                          | ScionPathML                                     | scion-dqn-sim                                         | ietf-scion-testbed                   |
+| ------------------------ | ----------------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
+| What it is               | measurement toolkit + real dataset + 5 ML tasks | BRITE topologies + simulated beaconing + DQN selector | a real 12-AS SCION deployment on LXC |
+| Real data                | yes, 4 ASes × 4 weeks                           | no                                                    | yes, live                            |
+| Control plane            | no                                              | simulated                                             | real                                 |
+| Link shaping             | no                                              | in-model                                              | **real, via `linkd` REST**           |
+| Many agents contending   | **no**                                          | **no**                                                | not exercised                        |
+| Closed loop              | **no**                                          | **no**                                                | **no**                               |
+| Model-agnostic interface | no, task-specific                               | no, DQN hardwired                                     | n/a                                  |
 
 All five ScionPathML tasks are open-loop supervised learning: one model, one prediction, scored against recorded data, nothing acts on the prediction. scion-dqn-sim evaluates a single agent on a single source–destination pair.
 

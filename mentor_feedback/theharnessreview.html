@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Harness After v1.2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>*,*::before,*::after{box-sizing:border-box}img,svg,video{max-width:100%;height:auto}table{border-collapse:collapse}</style>
+</head>
+<body>
+
+<style>
+:root{
+  --paper:#F4F6F8; --surface:#FFFFFF; --surface-sunk:#EDF0F4;
+  --ink:#11161D; --ink-2:#39424F; --ink-muted:#69737F;
+  --rule:#D9DEE5; --rule-strong:#B9C1CB;
+  --accent:#2B5AA0; --accent-soft:#E4EBF6;
+  --crit:#9E2F26; --crit-soft:#F7E4E1;
+  --major:#8A5A0B; --major-soft:#F8EEDA;
+  --minor:#3D5265; --minor-soft:#E7ECF1;
+  --ok:#2A6249; --ok-soft:#E1EFE8;
+  --f-display:"Spectral",Georgia,"Times New Roman",serif;
+  --f-body:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --measure:70ch; --gutter:clamp(1.1rem,4vw,2.75rem);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0E1217; --surface:#151A21; --surface-sunk:#1B222B;
+    --ink:#E5E9EF; --ink-2:#B7C0CB; --ink-muted:#8B95A2;
+    --rule:#252D37; --rule-strong:#3A4552;
+    --accent:#7BA6E0; --accent-soft:#1B2735;
+    --crit:#E08A80; --crit-soft:#2E1D1B;
+    --major:#DDB061; --major-soft:#2C2416;
+    --minor:#A3B2C2; --minor-soft:#1E252E;
+    --ok:#79BE9C; --ok-soft:#152520;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0E1217; --surface:#151A21; --surface-sunk:#1B222B;
+  --ink:#E5E9EF; --ink-2:#B7C0CB; --ink-muted:#8B95A2;
+  --rule:#252D37; --rule-strong:#3A4552;
+  --accent:#7BA6E0; --accent-soft:#1B2735;
+  --crit:#E08A80; --crit-soft:#2E1D1B;
+  --major:#DDB061; --major-soft:#2C2416;
+  --minor:#A3B2C2; --minor-soft:#1E252E;
+  --ok:#79BE9C; --ok-soft:#152520;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:60rem;margin:0 auto;padding:0 var(--gutter) 6rem}
+.masthead{border-bottom:2px solid var(--ink);padding:clamp(2.5rem,7vw,4.5rem) 0 1.5rem;margin-bottom:2.5rem}
+.eyebrow{font-family:var(--f-mono);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 1.1rem}
+h1{font-family:var(--f-display);font-weight:600;font-size:clamp(2.2rem,6vw,3.5rem);line-height:1.06;letter-spacing:-.015em;margin:0 0 .9rem;text-wrap:balance}
+.standfirst{font-family:var(--f-display);font-size:clamp(1.05rem,2.2vw,1.28rem);line-height:1.5;color:var(--ink-2);max-width:56ch;margin:0 0 2rem}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:1rem 1.75rem;border-top:1px solid var(--rule);padding-top:1.25rem}
+.meta div{display:flex;flex-direction:column;gap:.2rem}
+.meta .k{font-family:var(--f-mono);font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-muted)}
+.meta .v{font-family:var(--f-mono);font-size:.84rem;color:var(--ink);word-break:break-word}
+section{margin:0 0 3.5rem}
+h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.5rem,3.4vw,1.95rem);line-height:1.2;letter-spacing:-.01em;margin:0 0 .35rem;text-wrap:balance}
+.part-rule{display:flex;align-items:baseline;gap:1rem;border-top:2px solid var(--ink);padding-top:.9rem;margin:0 0 1.4rem}
+.part-no{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-muted);white-space:nowrap;padding-top:.35rem}
+h3{font-family:var(--f-body);font-weight:600;font-size:1.02rem;margin:2.4rem 0 .6rem;color:var(--ink)}
+p{margin:0 0 1.05rem;max-width:var(--measure)}
+ul,ol{margin:0 0 1.15rem;padding-left:1.25rem;max-width:var(--measure)}
+li{margin:0 0 .45rem}
+strong{font-weight:600;color:var(--ink)}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+a:hover{border-bottom-color:var(--accent)}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+code{font-family:var(--f-mono);font-size:.86em;background:var(--surface-sunk);padding:.1em .34em;color:var(--ink-2)}
+.lede{font-size:1.05rem;color:var(--ink-2);border-left:2px solid var(--accent);padding-left:1.15rem;margin:0 0 1.6rem;max-width:64ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);padding:1.6rem 1.5rem;margin:0 0 2.5rem}
+.verdict p:last-child{margin-bottom:0}
+.verdict h3{margin-top:0}
+.tally{display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);margin:0 0 2.5rem}
+.tally div{background:var(--surface);padding:.95rem 1rem}
+.tally .n{font-family:var(--f-mono);font-size:1.75rem;font-weight:500;line-height:1;font-variant-numeric:tabular-nums;display:block;margin-bottom:.35rem}
+.tally .l{font-family:var(--f-mono);font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-muted)}
+.n.crit{color:var(--crit)} .n.major{color:var(--major)} .n.minor{color:var(--minor)} .n.ok{color:var(--ok)}
+.finding{border-top:1px solid var(--rule);padding:1.5rem 0 .3rem}
+.finding:first-of-type{border-top:1px solid var(--rule-strong)}
+.fhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:.65rem;margin-bottom:.55rem}
+.fid{font-family:var(--f-mono);font-size:.78rem;font-weight:500;color:var(--ink-muted);letter-spacing:.04em}
+.ftitle{font-family:var(--f-body);font-weight:600;font-size:1.02rem;margin:0;flex:1 1 18rem;color:var(--ink)}
+.chip{font-family:var(--f-mono);font-size:.62rem;letter-spacing:.13em;text-transform:uppercase;padding:.24em .6em;border:1px solid currentColor;white-space:nowrap}
+.chip.crit{color:var(--crit);background:var(--crit-soft)}
+.chip.major{color:var(--major);background:var(--major-soft)}
+.chip.minor{color:var(--minor);background:var(--minor-soft)}
+.chip.ok{color:var(--ok);background:var(--ok-soft)}
+.chip.new{color:var(--accent);background:var(--accent-soft)}
+.finding p{margin-bottom:.85rem}
+.evidence{background:var(--surface-sunk);border-left:2px solid var(--rule-strong);margin:0 0 1.1rem;overflow-x:auto}
+.evidence pre{font-family:var(--f-mono);font-size:.775rem;line-height:1.6;margin:0;padding:.9rem 1.1rem;white-space:pre;color:var(--ink-2)}
+.evidence .cap{font-family:var(--f-mono);font-size:.64rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-muted);padding:.6rem 1.1rem .1rem}
+.evidence mark{background:transparent;color:var(--crit);font-weight:500}
+.tablewrap{overflow-x:auto;margin:0 0 1.6rem;border:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;font-size:.86rem;background:var(--surface)}
+th,td{text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-family:var(--f-mono);font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);font-weight:400;background:var(--surface-sunk);border-bottom:1px solid var(--rule-strong);white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+td.mono{font-family:var(--f-mono);font-size:.8rem}
+.tag{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.06em;text-transform:uppercase}
+.tag.yes{color:var(--ok)} .tag.no{color:var(--crit)} .tag.part{color:var(--major)} .tag.new{color:var(--accent)}
+.recs{counter-reset:rec;list-style:none;padding:0;max-width:var(--measure)}
+.recs li{counter-increment:rec;display:grid;grid-template-columns:2.5rem 1fr;gap:.9rem;border-top:1px solid var(--rule);padding:1rem 0;margin:0}
+.recs li::before{content:counter(rec,decimal-leading-zero);font-family:var(--f-mono);font-size:.82rem;color:var(--accent);padding-top:.15rem;font-variant-numeric:tabular-nums}
+.recs .rt{font-weight:600;display:block;margin-bottom:.25rem}
+.recs .rb{color:var(--ink-2);font-size:.94rem}
+.refs{font-family:var(--f-mono);font-size:.72rem;color:var(--ink-muted);display:block;margin-top:.35rem;letter-spacing:.03em}
+footer{border-top:2px solid var(--ink);padding-top:1.4rem;margin-top:1rem;font-size:.86rem;color:var(--ink-muted);max-width:var(--measure)}
+footer p{max-width:none}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Re-review · harness against specification v1.2</p>
+  <h1>The Harness After v1.2</h1>
+  <p class="standfirst">The repository has not changed. The specification has — and it moved toward the harness on strategy while moving away from it on vocabulary. Two of the repo's eight open questions can be closed today.</p>
+  <div class="meta">
+    <div><span class="k">Harness</span><span class="v">scionarena @ 7f83fe4</span></div>
+    <div><span class="k">Against</span><span class="v">Master Spec v1.2</span></div>
+    <div><span class="k">Previously</span><span class="v">reviewed against v1.0</span></div>
+    <div><span class="k">Repo changes since</span><span class="v">none</span></div>
+    <div><span class="k">Questions closable</span><span class="v">Q1, Q6 · Q2 partially</span></div>
+    <div><span class="k">Defects still open</span><span class="v">C1, C2, C3</span></div>
+  </div>
+</header>
+
+<section>
+  <p class="lede">A re-review with one side frozen is really a review of the moving side's consequences. Everything below follows from what v1.1 and v1.2 changed; where the first review's findings still stand unaltered, they are listed and not re-argued.</p>
+
+  <div class="verdict">
+    <h3>Verdict</h3>
+    <p><strong>The specification has converged on the harness's founding thesis.</strong> v1.2's §1 now argues that the value of a path oracle lies in improving a <em>selection decision</em>, not a number, and §28 insists decision quality be measured separately from accuracy. That is almost verbatim <code>docs/DESIGN.md</code> §1 — "existing SCION benchmarks answer <em>is your prediction accurate</em>; scionfit answers <em>does your model survive being deployed alongside other copies of itself</em>". The disagreement that made the first review's F4 uncomfortable has narrowed.</p>
+    <p><strong>And the spec now names two milestones the harness is the natural rig for.</strong> M4½ is a closed-loop campaign over five axes — population, defector fraction, mechanism ladder, paths-per-selector, staleness. ADR-04 is now a slot requiring a four-way bake-off behind one interface. The harness is the only thing in either project that can run either. It has gone from "a useful evaluation tool" to "the instrument two spec milestones are specified in terms of", and neither document says so.</p>
+    <p><strong>But v1.2 grew a vocabulary the contract cannot express.</strong> <code>exposure/contracts.py</code> contains zero occurrences of <em>unit</em>, <em>tier</em>, <em>coverage</em>, <em>diversity</em> or <em>ambiguity</em>. §7.1 now defines the unit as a computable object — the identifiable partition of the observed incidence matrix — and a spec-conformant model predicts unit states. <code>PathModel.predict</code> returns a mapping keyed by path. The gap the first review called F6 has hardened from "a missing field" into "a missing abstraction".</p>
+    <p><strong>One substrate constant is wrong by 60×</strong>, and it happens to be the one the harness's headline experiment is built on.</p>
+  </div>
+
+  <div class="tally">
+    <div><span class="n ok">2</span><span class="l">Questions closable</span></div>
+    <div><span class="n crit">1</span><span class="l">New defect</span></div>
+    <div><span class="n major">5</span><span class="l">New gaps</span></div>
+    <div><span class="n minor">3</span><span class="l">Carried forward</span></div>
+  </div>
+</section>
+
+<!-- ================= -->
+<section>
+  <div class="part-rule"><span class="part-no">Part one</span><h2>What the audits handed the harness</h2></div>
+
+  <p>The implementation audit that produced v1.1 answered questions the harness has been carrying as blockers. <code>docs/OPEN_QUESTIONS.md</code> still lists all eight as <code>OPEN</code>.</p>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">A1</span><h3 class="ftitle" style="margin:0">Q1 is answered, and it changes what probe R4 is for</h3><span class="chip ok">Closable</span></div>
+    <p>Q1 — <em>"Is the SCION path fingerprint stable across re-signing?"</em> — is marked <code>OPEN · blocks M1, M5</code>. It is answered. <code>snet.Fingerprint</code> is a SHA-256 over the ordered sequence of (ISD-AS, interface-ID) pairs and contains no cryptographic material whatsoever; the path combinator additionally collapses multiple constructions of the same interface sequence by default, exposing distinct segment IDs and MACs only to a caller who explicitly asks. <strong>The fingerprint is structural. It survives re-beaconing by design.</strong></p>
+    <p>The repo anticipated exactly this branch: <em>"If it does not change, the risk is hypothetical and R4 becomes a robustness check rather than a defect detector."</em> That is now the situation, and M5's planned R4 needs re-aiming rather than merely re-implementing. As specified, M5's R4 fails a model that collapses under <code>crypto_bound</code> — but <code>crypto_bound</code> has no correspondent in the deployed stack, so such a model is not wrong about deployment, and a <code>FAIL</code> verdict would be a false positive against the thing conformance claims to measure.</p>
+    <p><strong>What R4 should test instead.</strong> The deployment hazard is not the fingerprint; it is a model keying memory on something that <em>is not</em> the fingerprint — the raw path bytes, the dataplane path object, or the segment IDs that <code>findAllIdentical=true</code> exposes. So: keep both identity policies (they are cheap and the substrate already supports them), rename the failure semantics, and score the delta as a <strong>hygiene grade</strong> rather than a conformance failure. The probe becomes "does this model key on the identifier the protocol designates" — which is checkable, useful, and honest about severity.</p>
+    <p>This is the payoff the repo hoped for from the mentor question, arriving from the source tree instead. Q1 should be marked <code>RESOLVED</code> with the evidence, and <code>identity_policy</code> should acquire a documented default — <code>structural</code>, because that is what the stack does.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">A2</span><h3 class="ftitle" style="margin:0">Q6 is answered, and the answer invalidates a hardcoded constant</h3><span class="chip ok">Closable</span></div>
+    <p>Q6 asks what SCMP rate limit border routers apply, noting it <em>"sets the tool cost model. If probing is far cheaper or dearer than assumed, every budget-related result shifts."</em> The answer: the SCMP specification says only that SCMP <em>"may be subject to rate limiting"</em>, and there is no rate limiter in the router — no token bucket anywhere in the tree.</p>
+    <div class="evidence">
+      <div class="cap">exposure/tools.py — an invented constant, now known to be invented</div>
+      <pre>SCMP_LIMIT = RateLimit(calls=5, per_s=1.0)     # not a protocol constant
+BWTEST_LIMIT = RateLimit(calls=1, per_s=30.0)
+PATH_SERVER_LIMIT = RateLimit(calls=2, per_s=1.0)</pre>
+    </div>
+    <p>This does not mean the limits should be removed — an unlimited probe budget is not a safe assumption either, and v1.2's §29 now carries the probe budget as a <em>measured</em> M0 parameter precisely because it is per-deployment and may be zero. What it means for the harness is narrower and more useful: <strong>the rate limits are a scenario parameter, not a substrate constant.</strong> They belong in <code>Scenario</code> alongside <code>BeaconPolicy</code> and <code>LinkParams</code>, so a run can state which regime it assumed, and so the M6 benchmark can sweep it rather than bake it in. Right now two runs under different real-world assumptions are indistinguishable in the report.</p>
+    <p>Mark Q6 <code>RESOLVED — per-deployment, unspecified upstream, must be swept</code>, and move the three constants into the scenario schema with the current values as defaults.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">A3</span><h3 class="ftitle" style="margin:0">Q2 has a sharper provisional answer than "open"</h3><span class="chip minor">Partially closable</span></div>
+    <p>Q2 asks whether per-link offered load is observable or estimable, and warns that if not, <em>"the response model conditions on a latent proxy instead and probes R6 and R7 need redesigning."</em> The current answer, from the protocol rather than from a mentor: <strong>not directly observable</strong> — beacon metadata carries only static capacity, and the data plane exposes no per-hop state to endpoints — <strong>but estimable</strong>, and v1.2's §7.1 now says exactly under what condition: a unit's state is identifiable iff its column in the observed path-incidence matrix is distinguishable from its neighbours'.</p>
+    <p>So R6 and R7 do not need redesigning, but they do need re-reading. They test whether a model conditions on demand by <em>handing it a demand vector</em>. That is legitimate — a deployed oracle knows its own published shares — but it is a narrower claim than the probes' names imply, and it interacts with A6 below.</p>
+  </div>
+</section>
+
+<!-- ================= -->
+<section>
+  <div class="part-rule"><span class="part-no">Part two</span><h2>New defects and gaps</h2></div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B1</span><h3 class="ftitle" style="margin:0">The beacon interval is wrong by sixty-fold, in the constant the headline experiment rests on</h3><span class="chip crit">Critical</span></div>
+    <div class="evidence">
+      <div class="cap">core/segments.py — BeaconPolicy defaults vs. upstream</div>
+      <pre>interval_s: float = 300.0      <mark>upstream default: 5 s   (60x)</mark>
+lifetime_s: float = 21_600.0   upstream default: 6 h   (correct)</pre>
+    </div>
+    <p>The lifetime is right — <code>DefaultMaxExpTime = 63</code> gives 64 × 337.5 s = exactly 6 h, and the comment saying so is accurate. The interval is not: origination, propagation and registration all default to <strong>5 seconds</strong> upstream, not 300. The <code>ASSUMPTION(Q1)</code> marker on <code>BeaconPolicy</code> correctly flags the numbers as unverified, so this is the marker working — but it has now been checked and should be corrected rather than left flagged.</p>
+    <p><strong>Why this one matters more than an ordinary constant error.</strong> It is the clock of the identity-amnesia experiment. Under <code>crypto_bound</code> at a 300 s interval, a path's identifier changes about twelve times an hour and a model has real time to accumulate per-path state between refreshes. At the true 5 s interval it changes <strong>720 times an hour</strong>, and the re-beaconing-to-lifetime ratio is roughly 4,300:1 rather than 72:1. A model keyed on a churning identifier would not degrade gracefully; it would hold essentially no state at all. The harness's demonstrated result — 21 distinct identifiers and <code>stale_weight = 1.0</code> per refresh over 6,000 s — was measured at the wrong cadence and understates the effect by more than an order of magnitude.</p>
+    <p>Correcting it does not weaken the experiment; it makes it far more vivid, and it changes the M5 R4 design, because with A1's finding the interesting comparison is no longer <em>structural vs crypto_bound</em> but <em>how fast can identity churn before a model that keys correctly still loses</em>. That is a better probe and the substrate can already run it.</p>
+    <p><strong>Fix:</strong> <code>interval_s = 5.0</code> as the default, keep 300 available as a scenario override, and re-record the <code>docs/evidence/</code> runs. Also worth adding: the 337.5 s expiry quantum is now a known constant and the substrate's continuous <code>expiry_s</code> should be quantised to it, since a model reasoning about time-to-expiry in a real deployment sees 256 discrete values, not a float.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B2</span><h3 class="ftitle" style="margin:0">§7.1 gives units a computable definition, and the contract has no place to put one</h3><span class="chip major">Major</span></div>
+    <p>The first review's F6 said the contract had nowhere to put honest uncertainty. v1.2 hardened that from a missing field into a missing abstraction. §7.1 now defines the unit precisely — merge elements whose columns in the observed incidence matrix are identical — and §8 derives the ambiguity class from the same structure. A model built to this specification predicts <em>unit</em> states and composes them into path predictions through the §10 operator.</p>
+    <div class="evidence">
+      <div class="cap">grep over the module every model imports</div>
+      <pre>$ grep -c "unit\|tier\|coverage\|diversity\|ambiguity" \
+      src/scionarena/exposure/contracts.py
+<mark>0</mark></pre>
+    </div>
+    <p><code>PathModel.predict</code> returns <code>Mapping[path_id, Prediction]</code>. There is no way for a model to say "here are my unit estimates, compose them yourself", and therefore no way for the harness to check whether a model's path predictions are <em>consistent with</em> any unit-level state — which is the single most characteristic property of a spec-conformant oracle, and the property probe R2 (composition onto an unseen path) is groping toward without being able to name.</p>
+    <p><strong>This is now the harness's largest structural gap, and also its largest opportunity.</strong> R2 currently checks that a model produces <em>a</em> number for an unseen path and compares it to ground truth. With a unit-level output it could check something far stronger and much closer to what deployment needs: that the model's unit estimates, composed, reproduce its own path predictions — internal consistency — and that units shared between paths move together. Adding an optional <code>units</code> return alongside <code>paths</code> is backward-compatible (a model that omits it gets <code>DECLARED_ABSENT</code>) and it is what makes the harness able to test the spec's central abstraction rather than its surface.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B3</span><h3 class="ftitle" style="margin:0">The contract conflates published intent with realised load — in a place the harness elsewhere gets right</h3><span class="chip major">Major</span></div>
+    <p><code>Demand</code> is documented as <em>"offered load as a fraction of total traffic for a scope"</em> and is constructed from the published advisory:</p>
+    <div class="evidence">
+      <div class="cap">exposure/session.py — Demand is built from intent</div>
+      <pre>def demand_from_advisory(advisory: Advisory, n_hosts: int = 1) -> Demand:
+    """Contract-shaped demand from a published advisory. Used by M3."""
+    return Demand(per_path=dict(advisory.normalised()), n_hosts=n_hosts)</pre>
+    </div>
+    <p>Meanwhile the telemetry stream reports realised share and its docstring is emphatic about the distinction: <em>"<code>share</code> is the realised share, not the published weight. The two differ by the sampling noise, and a model that assumes its advice was followed exactly is wrong by exactly that much."</em></p>
+    <p><strong>The harness knows this in one file and forgets it in the other.</strong> A model handed <code>Demand</code> is handed its own intent labelled as load — precisely the assumption <code>streams.py</code> warns is wrong. v1.2 makes this sharper still: §19.6's performativity diagnostic and ADR-15's graduation path both turn on the gap between what was published and what happened, and the partially-performative framing v1.2 adopts makes the <em>responsive fraction</em> the quantity to estimate. A contract that hands the model a demand vector indistinguishable from its own advisory cannot test whether the model estimates that fraction, or even whether it knows the two differ.</p>
+    <p><strong>Fix:</strong> split the field — <code>Demand.intended</code> and <code>Demand.realised</code>, with realised populated from <code>hosts.shares()</code> and legitimately <code>None</code> where no telemetry covers the path. That single change makes R6 sharper, makes R9 (self-consistency) test something stronger, and creates the hook for a performativity probe that does not otherwise exist.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B4</span><h3 class="ftitle" style="margin:0">v1.2's per-class layer rules are directly probeable, and define a failure the harness cannot currently see</h3><span class="chip major">New probe</span></div>
+    <p>§20.6 now states which layers each requirement class may <em>rank</em> on and which may only <em>widen</em> intervals — latency class ranks on static plus liveness and widens on dynamic; throughput ranks on dynamic; compliance ranks on static attributes alone, fail-closed. The reasoning is a timescale argument: ranking on a 15-second-old congestion estimate is routing on lagged load, which is the documented oscillation mechanism.</p>
+    <p>This creates a model failure the harness has no probe for and could detect cleanly. <strong>Hold the static layer fixed, vary only the dynamic layer, and ask a latency-class model for a ranking.</strong> If the ranking reorders, the model is ranking on the layer §20.6 forbids. That is a one-variable behavioural probe of exactly the kind <code>docs/DESIGN.md</code> §5 argues for, it needs no new substrate, and it catches a defect that currently reaches the closed-loop tier undetected — where it shows up as oscillation and gets attributed to the model's advisory shape rather than to its metric choice.</p>
+    <p>Call it R11. It pairs naturally with R7 (monotone in load), which establishes the model <em>can</em> see the dynamic layer; R11 then establishes it uses it in the right place.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B5</span><h3 class="ftitle" style="margin:0">Calibration is now specified precisely enough to probe, and the update rule is three lines</h3><span class="chip major">New probe</span></div>
+    <p>The first review's F5 said nothing tests calibration. v1.2 removed the excuse: §19.5 now specifies the exact online update — <code>α_{t+1} = α_t + η (target − 1{y_t ∈ C_t})</code> — and N4 claims long-run coverage on arbitrary sequences rather than monitored-under-shift.</p>
+    <p>Two things follow for the harness. A <strong>coverage detector</strong> in <code>instrument/</code> is now a small, well-defined object: run the event log, count interval hits against realised observations per bucket, report trailing coverage. It is already M4 deliverable 2 and it converts R5 from a shape check ("three ordered quantiles") into a test of the property that matters. And a <strong>calibration-under-shift probe</strong> becomes possible: apply a scheduled <code>link_degrade</code>, then measure whether the model's intervals recover nominal coverage and how fast. A model with fixed split-conformal intervals will not recover; one with an adaptive level will. That is a real discrimination between two model designs the spec now has an opinion about.</p>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fid">B6</span><h3 class="ftitle" style="margin:0">The harness is M4½'s rig, and is two knobs short of running it</h3><span class="chip major">Opportunity</span></div>
+    <p>v1.2 created M4½: run the closed-loop campaign to the "+jittered mirror" rung <em>before</em> building coordination, and let the measured compliant-share threshold decide whether M5 happens. Its axes are population size, defector fraction, mechanism ladder, paths-per-selector, and staleness. Against the harness:</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>M4½ axis</th><th class="mono">Harness</th><th>Gap</th></tr></thead>
+      <tbody>
+        <tr><td>Population size 10²–10⁴</td><td><span class="tag yes">have</span></td><td><code>HostParams.n_hosts</code>, multinomial sampling</td></tr>
+        <tr><td>Defector fraction 0–100 %</td><td><span class="tag part">partial</span></td><td><code>defector_fraction</code> ✓, one kind (<code>greedy</code>) only</td></tr>
+        <tr><td>Staleness</td><td><span class="tag part">nearly</span></td><td><code>extra_latency_s</code> and <code>decision_s</code> exist; needs an <em>information</em>-staleness delay on telemetry delivery, not just decision delay</td></tr>
+        <tr><td>Oscillation measurement</td><td><span class="tag yes">have</span></td><td><code>fast_swing</code>, <code>oscillation_index</code>, ADR 0010/0011</td></tr>
+        <tr><td>Mechanism ladder rungs 1–2</td><td><span class="tag part">partial</span></td><td>point-rankings ✓ via <code>MinRTTGreedy</code>; intervals exist but hosts ignore them</td></tr>
+        <tr><td>Rung 3 — selector discipline</td><td><span class="tag no">missing</span></td><td>ε-set, dwell, hysteresis, per-host jitter in <code>HostParams</code></td></tr>
+        <tr><td>Rung 4 — jittered mirror</td><td><span class="tag no">missing</span></td><td>advisories land instantly and simultaneously for all hosts</td></tr>
+        <tr><td>Paths per selector (1…k)</td><td><span class="tag no">missing</span></td><td>hosts always sample a distribution; the discrete single-path regime is unrepresentable</td></tr>
+      </tbody>
+    </table></div>
+    <p>Four of eight are done, two are close, and the two missing rungs are the same item the first review called F7 — with the difference that they are now on a spec milestone's critical path rather than a nice-to-have. <strong>The discipline rung remains the highest-value work in the repository</strong>, and the seam is still where it was: <code>HostParams.resample_s</code> is a minimum dwell in all but name and <code>_thin</code> already carries placed hosts across rounds.</p>
+    <p>The paths-per-selector axis is new since the first review and is cheaper than it looks: a selector that picks one path is a population of size one sampling the advisory, so it is a constraint on the draw rather than a new mechanism.</p>
+  </div>
+</section>
+
+<!-- ================= -->
+<section>
+  <div class="part-rule"><span class="part-no">Part three</span><h2>Carried forward, unchanged</h2></div>
+  <p>These were established in the first review, nothing since has altered them, and they are listed rather than re-argued. All three defects were reproduced against this commit and the repository has had no commits since.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="mono">ID</th><th>Finding</th><th class="mono">Status</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">C1</td><td><code>as_policy_filter</code> leaks — lazily-discovered core segments escape the filter; ~11k paths still traverse the "filtered" AS at dev tier</td><td><span class="tag no">open</span></td></tr>
+      <tr><td class="mono">C2</td><td>Bandwidth probe erases its own load and leaves −50 Mbps behind until the next grid tick</td><td><span class="tag no">open</span></td></tr>
+      <tr><td class="mono">C3</td><td><code>beacons</code> stream drops 81 % of re-signings — and B1 raises the true event rate 60×, so the absolute loss is far larger</td><td><span class="tag no">open</span></td></tr>
+      <tr><td class="mono">F2</td><td>No return-path composition; <code>rtt_s</code> is hardcoded 2× forward. Still blocks G3, which v1.1 confirmed is exact in the real stack</td><td><span class="tag no">open</span></td></tr>
+      <tr><td class="mono">F4</td><td>R8 vs ADR-10: the harness requires the model to emit a distribution; the spec puts randomisation in the selector. <em>Narrowed but not closed</em> — v1.2's §20.6 layer table clarifies scope without resolving where anti-herding belongs</td><td><span class="tag part">narrowed</span></td></tr>
+      <tr><td class="mono">C4</td><td>Performance gate excludes the closed loop — <code>substrate_step_s</code> is measured with no host scopes registered</td><td><span class="tag no">open</span></td></tr>
+      <tr><td class="mono">C8</td><td>Doc drift: README "no required dependencies"; DESIGN.md "Python 3.10+"; <code>analytical.py</code> still "rewritten in M1" after four milestones</td><td><span class="tag no">open</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================= -->
+<section>
+  <div class="part-rule"><span class="part-no">Part four</span><h2>Revised plan</h2></div>
+  <p>Reordered against the first review's list, because v1.2 changed what is urgent. Items 1–3 are corrections; 4–6 are the M4½ critical path; 7–9 are new capability.</p>
+  <ol class="recs">
+    <li><span class="rt">Fix C1 and C2, then B1</span><span class="rb">The two substrate defects silently invalidate results and neither is caught by 400 passing tests. Then set <code>interval_s = 5.0</code> and re-record <code>docs/evidence/</code> — the identity result gets stronger, not weaker, and every M5 design decision downstream of it changes.<span class="refs">C1 · C2 · B1</span></span></li>
+
+    <li><span class="rt">Close Q1 and Q6 in <code>OPEN_QUESTIONS.md</code>, and re-aim R4</span><span class="rb">Both are answered from the source tree. Q1 unblocks M1 and M5 and turns R4 from a defect detector into a hygiene grade aimed at the real hazard — a model keying on the raw path or segment IDs rather than the fingerprint. Q6 moves the rate limits into the scenario schema so a run states which regime it assumed.<span class="refs">A1 · A2</span></span></li>
+
+    <li><span class="rt">Accumulate <code>last_resigned</code></span><span class="rb">Still a one-character fix, now more urgent: at the corrected 5 s interval the beacon feed carries sixty times the events and the stream still reports one tick's worth per advance. M5's R4 rewrite reads this feed.<span class="refs">C3 · B1</span></span></li>
+
+    <li><span class="rt">Build the selector-discipline rung</span><span class="rb">ε-set width, hysteresis margin, minimum dwell, per-host timer jitter in <code>HostParams</code>. Unchanged from the first review except in priority: it is now the missing rung of a specified spec milestone rather than a gap in a nice-to-have, and M4½ cannot run without it.<span class="refs">B6 · F7</span></span></li>
+
+    <li><span class="rt">Add paths-per-selector and information-staleness axes</span><span class="rb">Both are constraints on existing machinery rather than new mechanisms — a single-path selector is a population of one sampling the advisory, and information staleness is a delivery delay on the telemetry stream beside the decision delay <code>extra_latency_s</code> already provides. Together they complete M4½'s five axes.<span class="refs">B6</span></span></li>
+
+    <li><span class="rt">Write <code>docs/SPEC-MAP.md</code></span><span class="rb">Still recommended, now much easier: v1.2 is far more mappable than v1.0, and the map is what would have caught B1 and surfaced A1/A2 without a source audit. One table, spec requirement against probe or knob, with the rest marked <em>not covered — deliberate</em> or <em>not covered — gap</em>.<span class="refs">F1</span></span></li>
+
+    <li><span class="rt">Add the coverage detector and R11</span><span class="rb">Coverage is already M4 deliverable 2 and §19.5 now specifies the update rule, so both the detector and a calibration-under-shift probe are small. R11 — hold static fixed, vary dynamic, check a latency-class ranking does not reorder — catches a defect that currently surfaces only as unexplained oscillation at the closed-loop tier.<span class="refs">B4 · B5</span></span></li>
+
+    <li><span class="rt">Split <code>Demand</code> into intended and realised</span><span class="rb">The harness already knows the distinction in <code>streams.py</code> and discards it in <code>contracts.py</code>. Splitting the field sharpens R6 and R9 and creates the only available hook for a performativity probe, which v1.2's partially-performative framing makes newly tractable.<span class="refs">B3</span></span></li>
+
+    <li><span class="rt">Add an optional unit-level output to the contract</span><span class="rb">The largest item and the one that decides whether the harness can test the spec's central abstraction or only its surface. Backward-compatible — a model that omits it gets <code>DECLARED_ABSENT</code>, which is what that status exists for — and it upgrades R2 from "produces a number" to "its unit estimates compose to its own path predictions". Worth scoping alongside M5 rather than inside it.<span class="refs">B2</span></span></li>
+  </ol>
+</section>
+
+<footer>
+  <p><strong>Method.</strong> The harness was re-read at <code>7f83fe4</code>; <code>git status</code> shows no commits since the first review, so every carried-forward finding is carried forward on that basis rather than re-reproduced. New findings A1–A3 and B1 were checked against the <code>scionproto/scion</code> tree and the harness source side by side; B2, B3 and B6 were verified by grep and file read at this commit. Where v1.2 changed the spec but not the assessment, nothing is said.</p>
+  <p><strong>One caveat on B1.</strong> The 5 s figure is the upstream <em>default</em> configuration, not a protocol constant — a deployment may configure otherwise, and the topology generator in a testbed often does. The correction is therefore to the default and to the comment that calls 300 s plausible, not to the existence of the knob. What is not defensible is leaving a value sixty times off the reference implementation as the number every committed evidence run was measured at.</p>
+</footer>
+
+</div>
+
+</body>
+</html>
