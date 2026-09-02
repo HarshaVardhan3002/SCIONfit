@@ -23,6 +23,7 @@ differently would diverge while both being correct.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -80,6 +81,31 @@ class HostParams:
     #: population, not of the model, and scoring has to know which it got.
     resample_s: float = 1.0
 
+    # ------------------------------------------------ the mechanism ladder
+    # ADR 0015. Every default below is the behaviour that existed before the
+    # rung was added, so a scenario that does not ask for discipline gets the
+    # population M3 and M4 were measured against, draw for draw.
+
+    #: Rung 3, and the paths-per-selector axis: consider at most this many of
+    #: the advised paths, by weight. ``None`` is "all of them".
+    k_paths: int | None = None
+    #: Rung 3: and only those weighing at least this fraction of the best one.
+    #: 0.0 keeps everything; 1.0 keeps the argmax alone.
+    eps_set: float = 0.0
+    #: Rung 3: switch only if the destination outweighs the incumbent by this
+    #: much. In units of advised weight, so 0.05 is five points of share.
+    hysteresis: float = 0.0
+    #: Rung 3: having switched, a host will not switch again for this long.
+    dwell_s: float = 0.0
+    #: Rung 3: 1.0 is independent timers -- every host reconsiders with
+    #: probability ``dt / resample_s`` each step, which is what the population
+    #: has always done. 0.0 is the synchronised herd: the whole scope
+    #: reconsiders together when the clock crosses a multiple of ``resample_s``.
+    timer_jitter: float = 1.0
+    #: Rung 4, the jittered mirror: seconds over which a newly published
+    #: advisory reaches the population. 0.0 is instantly and simultaneously.
+    mirror_jitter_s: float = 0.0
+
     def __post_init__(self) -> None:
         if self.n_hosts < 0:
             raise ValueError(f"n_hosts must not be negative, got {self.n_hosts}")
@@ -96,6 +122,18 @@ class HostParams:
             raise ValueError("churn rates must not be negative")
         if self.resample_s <= 0.0:
             raise ValueError(f"resample_s must be positive, got {self.resample_s}")
+        if self.k_paths is not None and self.k_paths < 1:
+            raise ValueError(f"k_paths must be at least 1 or None, got {self.k_paths}")
+        if not 0.0 <= self.eps_set <= 1.0:
+            raise ValueError(f"eps_set must be in [0, 1], got {self.eps_set}")
+        if self.hysteresis < 0.0:
+            raise ValueError(f"hysteresis must not be negative, got {self.hysteresis}")
+        if self.dwell_s < 0.0:
+            raise ValueError(f"dwell_s must not be negative, got {self.dwell_s}")
+        if not 0.0 <= self.timer_jitter <= 1.0:
+            raise ValueError(f"timer_jitter must be in [0, 1], got {self.timer_jitter}")
+        if self.mirror_jitter_s < 0.0:
+            raise ValueError(f"mirror_jitter_s must not be negative, got {self.mirror_jitter_s}")
         mix = tuple((str(name), float(w)) for name, w in self.sla_mix)
         if not mix:
             raise ValueError("sla_mix must name at least one SLA")
@@ -109,9 +147,82 @@ class HostParams:
         return int(self.n_hosts * self.defector_fraction)
 
     @property
+    def disciplined(self) -> bool:
+        """Does this population do anything a rung-3 selector does?
+
+        The whole ladder is behind this: a default population must take the
+        same branches, and cost the same, as it did before ADR 0015.
+        """
+        return (
+            self.k_paths is not None
+            or self.eps_set > 0.0
+            or self.hysteresis > 0.0
+            or self.dwell_s > 0.0
+            or self.timer_jitter < 1.0
+        )
+
+    @property
     def offered_mbps(self) -> float:
         """What the whole population offers, if every host is up."""
         return self.n_hosts * self.mbps_per_host
+
+
+def _considered(weights: NDArray[np.float64], params: HostParams) -> NDArray[np.float64]:
+    """The advised distribution, cut down to what a selector will consider.
+
+    ``eps_set`` and ``k_paths`` are one operation (ADR 0015): a mask on the
+    advisory, renormalised. It is applied to the *advisory* and never to the
+    path set, so the mass a disciplined selector refuses to use shows up in
+    ``deviation()`` rather than being renormalised out of existence.
+    """
+    if weights.size == 0 or (params.k_paths is None and params.eps_set <= 0.0):
+        return weights
+    kept = weights.astype(np.float64, copy=True)
+    best = float(kept.max()) if kept.size else 0.0
+    if params.eps_set > 0.0 and best > 0.0:
+        kept[kept < params.eps_set * best] = 0.0
+    if params.k_paths is not None and params.k_paths < kept.size:
+        # Stable, so ties fall to the lower path index and two runs agree.
+        kept[np.argsort(-kept, kind="stable")[params.k_paths :]] = 0.0
+    total = float(kept.sum())
+    # Nothing survived the mask -- every weight was zero. A host still has to
+    # send somewhere, so it considers everything, exactly as ``publish`` does.
+    return kept / total if total > 0.0 else weights
+
+
+def _switch(
+    movers_by_src: NDArray[np.int64],
+    weights: NDArray[np.float64],
+    hysteresis: float,
+    rng: np.random.Generator,
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Move hosts that clear the margin. Returns ``(stayed, arrived)``.
+
+    A mover on path *i* accepts a destination *j* only if
+    ``w[j] > w[i] + hysteresis``. Under a threshold rule the acceptable set for
+    *i* is a prefix of the paths sorted by descending weight, so one sort and
+    one prefix sum settle every source at once: acceptance is a vectorised
+    binomial, and only the destination draw needs a call per distinct prefix
+    length. The obvious ``k x k`` acceptance matrix is 9 M entries at 300 paths
+    and 100 scopes, per step. See ADR 0015.
+    """
+    order = np.argsort(-weights, kind="stable")
+    descending = weights[order]
+    prefix = np.cumsum(descending)
+    # How many weights are strictly greater than w[i] + hysteresis. Negated so
+    # the array searchsorted reads is ascending.
+    lengths = np.searchsorted(-descending, -(weights + hysteresis), side="left")
+    accept_p = np.where(lengths > 0, prefix[np.maximum(lengths - 1, 0)], 0.0)
+    accepted = rng.binomial(movers_by_src, np.clip(accept_p, 0.0, 1.0)).astype(np.int64)
+
+    arrived = np.zeros(weights.size, dtype=np.int64)
+    for length in np.unique(lengths[accepted > 0]):
+        n_moving = int(accepted[lengths == length].sum())
+        if n_moving <= 0 or length <= 0:
+            continue
+        drawn = rng.multinomial(n_moving, descending[:length] / prefix[length - 1])
+        np.add.at(arrived, order[:length], drawn.astype(np.int64))
+    return movers_by_src - accepted, arrived
 
 
 @dataclass
@@ -149,6 +260,17 @@ class ScopeState:
     #: Simulated time the current advisory was applied, or -inf if none was.
     advised_at_s: float = float("-inf")
     n_resamples: int = 0
+    #: Rung 4 (ADR 0015). What the part of the population that has not yet seen
+    #: the current advisory is still sampling. Equal to ``intended`` whenever
+    #: ``mirror_jitter_s`` is zero, which is the default.
+    mirrored: NDArray[np.float64] = field(default_factory=lambda: np.zeros(0, np.float64))
+    #: How much of the population the current advisory has reached, in [0, 1].
+    mirror_frac: float = 1.0
+    #: Rung 3: movers per step inside the dwell window, oldest first. Its sum is
+    #: how many hosts are barred from moving now because they just moved.
+    moved_recently: deque[int] = field(default_factory=deque)
+    #: Simulated time the synchronised part of the population last reconsidered.
+    last_sync_s: float = float("-inf")
 
     @property
     def key(self) -> tuple[int, int]:
@@ -161,6 +283,31 @@ class ScopeState:
     @property
     def offered_mbps(self) -> float:
         return self.n_live * self.params.mbps_per_host
+
+    @property
+    def locked(self) -> int:
+        """Hosts that moved inside the dwell window and so may not move now."""
+        return int(sum(self.moved_recently))
+
+    def blended(self) -> NDArray[np.float64]:
+        """What the population believes, mid-mirror.
+
+        ``mirror_frac`` of it has seen the current advisory and the rest is
+        still on the one before. At ``mirror_jitter_s = 0`` the fraction is 1
+        the instant the advisory lands and this is ``intended``.
+        """
+        if self.mirror_frac >= 1.0 or self.mirrored.size != self.intended.size:
+            return self.intended
+        return self.mirror_frac * self.intended + (1.0 - self.mirror_frac) * self.mirrored
+
+    def effective(self) -> NDArray[np.float64]:
+        """What the population actually samples: believed, then disciplined.
+
+        The distribution ``concentration_bound`` is about. Feeding it
+        ``intended`` instead would fail for a correct implementation the moment
+        any rung-3 knob is on -- see ADR 0015.
+        """
+        return _considered(self.blended(), self.params)
 
     def realised(self) -> dict[int, float]:
         """Realised share per path id. Sums to 1 while anybody is sending."""
@@ -195,6 +342,10 @@ class ScopeState:
             "deviation": round(self.deviation(), 6),
             "advised_at_s": self.advised_at_s if np.isfinite(self.advised_at_s) else None,
             "n_resamples": self.n_resamples,
+            # What the population was doing, not only what it was told. A large
+            # deviation with k_paths=1 is discipline, not a badly behaved model.
+            "locked": self.locked,
+            "mirror_frac": round(self.mirror_frac, 6),
         }
 
 
@@ -295,6 +446,11 @@ class HostPopulation:
         scope.counts = np.zeros(scope.n_paths, dtype=np.int64)
         scope.compliant = np.zeros(scope.n_paths, dtype=np.int64)
         scope.intended = self._carry_over(scope, previous)
+        # The mirror does not survive a path set moving under it: the older
+        # belief was over paths that may no longer exist, and carrying it would
+        # blend two different worlds.
+        scope.mirrored = scope.intended.copy()
+        scope.mirror_frac = 1.0
 
     def _carry_over(self, scope: ScopeState, previous: Mapping[int, float]) -> NDArray[np.float64]:
         """Re-align an advisory onto a path set that has moved under it.
@@ -349,6 +505,10 @@ class HostPopulation:
         asked = sum(max(0.0, float(w)) for w in weights.values())
         landed = float(vector.sum())
         scope.stale_weight = 0.0 if asked <= 0.0 else max(0.0, 1.0 - landed / asked)
+        # What the population believes right now, before this advisory starts
+        # reaching it. A second publication inside a mirror window blends from
+        # where the population actually got to, not from the advisory before.
+        believed = scope.blended().copy()
         if landed <= 0.0:
             # Every path named is one this scope does not have. Uniform is the
             # honest fallback: the hosts have to send somewhere, and pretending
@@ -357,6 +517,12 @@ class HostPopulation:
         else:
             scope.intended = vector / landed
         scope.advised_at_s = t
+        if scope.params.mirror_jitter_s > 0.0:
+            scope.mirrored = believed
+            scope.mirror_frac = 0.0
+        else:
+            scope.mirrored = scope.intended
+            scope.mirror_frac = 1.0
         return scope
 
     # ------------------------------------------------------------------ steps
@@ -409,19 +575,26 @@ class HostPopulation:
             scope.compliant = scope.counts.copy()
             return
         rng = self._rng(index, 2)
-        n_defect = int(scope.n_live * scope.params.defector_fraction)
+        params = scope.params
+        n_defect = int(scope.n_live * params.defector_fraction)
         n_comply = scope.n_live - n_defect
 
-        # A population that reconsiders every 30 s does not all reconsider at
-        # once; a fraction of it does, every step. Modelling it as "everyone,
-        # rarely" would put a sawtooth in the load that no host chose.
-        fraction = min(1.0, dt_s / scope.params.resample_s)
-        if fraction >= 1.0:
-            compliant = rng.multinomial(n_comply, scope.intended).astype(np.int64)
+        self._advance_mirror(scope, t)
+        target = scope.effective()
+
+        if params.disciplined:
+            compliant = self._disciplined(scope, rng, n_comply, target, t, dt_s)
         else:
-            movers = int(rng.binomial(n_comply, fraction))
-            held = self._thin(scope.compliant, n_comply - movers, rng)
-            compliant = held + rng.multinomial(movers, scope.intended).astype(np.int64)
+            # A population that reconsiders every 30 s does not all reconsider at
+            # once; a fraction of it does, every step. Modelling it as "everyone,
+            # rarely" would put a sawtooth in the load that no host chose.
+            fraction = min(1.0, dt_s / params.resample_s)
+            if fraction >= 1.0:
+                compliant = rng.multinomial(n_comply, target).astype(np.int64)
+            else:
+                movers = int(rng.binomial(n_comply, fraction))
+                held = self._thin(scope.compliant, n_comply - movers, rng)
+                compliant = held + rng.multinomial(movers, target).astype(np.int64)
 
         counts = compliant.copy()
         if n_defect > 0 and cost is not None:
@@ -434,6 +607,115 @@ class HostPopulation:
         scope.compliant = compliant
         scope.counts = counts
         scope.n_resamples += 1
+
+    def _advance_mirror(self, scope: ScopeState, t: float) -> None:
+        """How much of the population the current advisory has reached by now."""
+        window = scope.params.mirror_jitter_s
+        if window <= 0.0 or not np.isfinite(scope.advised_at_s):
+            scope.mirror_frac = 1.0
+            return
+        scope.mirror_frac = float(np.clip((t - scope.advised_at_s) / window, 0.0, 1.0))
+
+    def _disciplined(
+        self,
+        scope: ScopeState,
+        rng: np.random.Generator,
+        n_comply: int,
+        target: NDArray[np.float64],
+        t: float,
+        dt_s: float,
+    ) -> NDArray[np.int64]:
+        """Rung 3. Who is allowed to reconsider, and what they do about it.
+
+        Four knobs in the order they apply to one host: it may be locked by
+        ``dwell_s`` from its last move; if not, it reconsiders on its own timer
+        or with the herd, per ``timer_jitter``; it considers only the paths
+        ``eps_set`` and ``k_paths`` left in ``target``; and it moves only if the
+        destination clears ``hysteresis``. See ADR 0015.
+        """
+        params = scope.params
+        placed = scope.compliant
+        total_placed = int(placed.sum())
+        eligible = max(0, n_comply - scope.locked)
+        movers = self._movers(scope, rng, eligible, t, dt_s)
+
+        if total_placed > 0:
+            # Who reconsiders is drawn from where the population is, so the
+            # movers' incumbents are known and hysteresis has something to
+            # compare against. Clipped to what is actually on each path: the
+            # draw is with replacement and a cell can otherwise overrun.
+            by_source = np.minimum(
+                rng.multinomial(movers, placed / total_placed).astype(np.int64), placed
+            )
+            held = placed - by_source
+        else:
+            # Nobody is anywhere yet, so there is no incumbent. Hosts that have
+            # not reconsidered are not sending, exactly as an undisciplined
+            # population's are not.
+            by_source = np.zeros(scope.n_paths, dtype=np.int64)
+            held = by_source.copy()
+
+        moving = int(by_source.sum()) if total_placed > 0 else movers
+        if params.hysteresis > 0.0 and total_placed > 0:
+            stayed, arrived = _switch(by_source, target, params.hysteresis, rng)
+        else:
+            stayed = np.zeros(scope.n_paths, dtype=np.int64)
+            arrived = rng.multinomial(moving, target).astype(np.int64)
+        self._remember_movers(scope, int(arrived.sum()), dt_s)
+
+        # A population that shrank cannot keep everyone it had placed. One that
+        # grew does not place its new hosts until they reconsider, which is what
+        # an undisciplined population does too.
+        room = max(0, n_comply - moving)
+        if int(held.sum()) > room:
+            held = self._thin(held, room, rng)
+        return held + stayed + arrived
+
+    def _movers(
+        self, scope: ScopeState, rng: np.random.Generator, eligible: int, t: float, dt_s: float
+    ) -> int:
+        """How many of the eligible reconsider this step.
+
+        ``timer_jitter`` splits the population between independent timers --
+        which is what it has always had -- and one shared timer that fires when
+        the clock crosses a multiple of ``resample_s``. The synchronised end is
+        a fleet restarted by one deploy, not a strawman.
+        """
+        params = scope.params
+        if eligible <= 0:
+            return 0
+        independent = int(round(eligible * params.timer_jitter))
+        fraction = min(1.0, dt_s / params.resample_s)
+        movers = int(rng.binomial(independent, fraction))
+        together = eligible - independent
+        if together > 0 and self._sync_fires(scope, t, dt_s):
+            movers += together
+            scope.last_sync_s = t
+        return movers
+
+    @staticmethod
+    def _sync_fires(scope: ScopeState, t: float, dt_s: float) -> bool:
+        """Did the shared timer cross a multiple of ``resample_s`` this step?"""
+        period = scope.params.resample_s
+        if dt_s >= period:
+            return True
+        return int((t + 1e-9) // period) > int((t - dt_s + 1e-9) // period)
+
+    def _remember_movers(self, scope: ScopeState, moved: int, dt_s: float) -> None:
+        """Push this step's movers into the dwell ledger and age it.
+
+        Length ``ceil(dwell_s / dt)``, so the sum is exactly the number of hosts
+        that moved inside the window. Which individuals they are is not
+        represented and does not need to be: hosts in a scope are exchangeable.
+        """
+        window = scope.params.dwell_s
+        if window <= 0.0:
+            scope.moved_recently.clear()
+            return
+        scope.moved_recently.append(int(moved))
+        depth = max(1, int(np.ceil(window / dt_s)))
+        while len(scope.moved_recently) > depth:
+            scope.moved_recently.popleft()
 
     def _thin(
         self, counts: NDArray[np.int64], keep: int, rng: np.random.Generator
@@ -527,6 +809,12 @@ class HostPopulation:
                             "counts": scope.counts.tolist(),
                             "intended": [round(float(w), 9) for w in scope.intended],
                             "n_live": scope.n_live,
+                            # Ladder state (ADR 0015). Two runs can coincide on
+                            # counts for a step while differing in how much of
+                            # the population has seen the advisory, or in how
+                            # much of it is barred from moving.
+                            "mirror_frac": round(scope.mirror_frac, 9),
+                            "locked": scope.locked,
                         }
                         for scope in sorted(self.scopes.values(), key=lambda s: s.key)
                     ],

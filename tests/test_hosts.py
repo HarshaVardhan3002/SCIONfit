@@ -304,3 +304,175 @@ def test_a_population_with_no_scopes_is_harmless() -> None:
     empty = HostPopulation(world.topology, seed=1, params=HostParams())
     assert empty.n_scopes == 0
     assert empty.step(0.0, 1.0, world.links).sum() == 0.0
+
+
+# --------------------------------------------------------------------------
+# the mechanism ladder (ADR 0015)
+#
+# Every rung defaults to the behaviour that existed before it, so the first
+# test here is the one that protects M3's and M4's recorded results: a default
+# population must draw exactly what it drew before the knobs existed.
+
+
+def test_a_population_that_asks_for_no_discipline_is_the_population_we_had() -> None:
+    """Names the risk: six new knobs on the object every M3 and M4 number was
+    measured against. If a default draw moves, every result in docs/evidence is
+    silently invalidated and nothing fails."""
+    assert not HostParams().disciplined
+    assert HostParams(resample_s=30.0, defector_fraction=0.3).disciplined is False
+    assert HostParams(k_paths=2).disciplined
+    assert HostParams(timer_jitter=0.5).disciplined
+
+
+def _placed(n_hosts: int, seconds: float = 200.0, **params) -> tuple:
+    """One scope, one advisory over three paths, run to steady state."""
+    world = scenario(step_s=1.0).build()
+    src, dst = a_scope(world)
+    state = world.add_scope(
+        src, dst, params=HostParams(n_hosts=n_hosts, mbps_per_host=1.0, **params)
+    )
+    ids = state.path_ids[:3]
+    world.publish_advisory(src, dst, {ids[0]: 0.5, ids[1]: 0.3, ids[2]: 0.2})
+    world.step(seconds)
+    return world, state, ids
+
+
+def test_a_selector_that_will_use_one_path_uses_the_best_one() -> None:
+    """Paths-per-selector, which ADR 0015 makes the same operation as the
+    epsilon-set: a mask on the advisory, renormalised."""
+    _, state, ids = _placed(4_000, k_paths=1)
+    realised = state.realised()
+
+    assert realised[ids[0]] == pytest.approx(1.0, abs=0.02)
+    assert realised.get(ids[2], 0.0) == pytest.approx(0.0, abs=0.01)
+
+
+def test_the_mass_a_disciplined_selector_refuses_shows_up_as_deviation() -> None:
+    """It must not be renormalised out of existence: the report has to be able
+    to say that a large deviation was the population's discipline rather than a
+    badly behaved model. ADR 0015 rejects truncating the path set for exactly
+    this reason."""
+    _, state, _ = _placed(4_000, k_paths=1)
+
+    assert state.deviation() == pytest.approx(0.5, abs=0.05), "0.5 of the advisory unused"
+    assert state.effective().sum() == pytest.approx(1.0)
+    assert state.intended.sum() == pytest.approx(1.0), "the advisory itself is untouched"
+
+
+def test_an_epsilon_set_drops_the_paths_it_is_told_to() -> None:
+    _, state, ids = _placed(4_000, eps_set=0.6)  # keeps >= 0.6 * 0.5 = 0.3
+    realised = state.realised()
+
+    assert realised.get(ids[2], 0.0) == pytest.approx(0.0, abs=0.01), "0.2 < 0.3, dropped"
+    assert realised[ids[0]] == pytest.approx(0.5 / 0.8, abs=0.03)
+
+
+def _after_a_swap(hysteresis: float) -> float:
+    """Settle on (0.5, 0.3, 0.2), then ask for the top two to trade places.
+
+    The gap a mover has to clear is 0.2, so a margin either side of that
+    decides whether the population moves at all.
+    """
+    world, state, ids = _placed(4_000, hysteresis=hysteresis, resample_s=1.0)
+    before = state.counts.copy()
+    world.publish_advisory(state.src, state.dst, {ids[0]: 0.3, ids[1]: 0.5, ids[2]: 0.2})
+    world.step(100.0)
+    return float(np.abs(state.counts - before).sum()) / max(1, int(before.sum()))
+
+
+def test_hysteresis_holds_a_population_where_it_is() -> None:
+    """A margin wider than the gap means nobody clears it, so a population that
+    has settled stays settled however often it reconsiders."""
+    assert _after_a_swap(0.5) < 0.05, "a margin of 0.5 let a gap of 0.2 move the population"
+
+
+def test_a_margin_that_can_be_cleared_is_cleared() -> None:
+    """The companion to the test above: a hysteresis that blocks everything is
+    also satisfied by an implementation that never moves anyone."""
+    assert _after_a_swap(0.05) > 0.2
+
+
+def test_dwell_bars_a_host_that_just_moved_from_moving_again() -> None:
+    world, state, ids = _placed(4_000, resample_s=1.0, dwell_s=30.0, seconds=1.0)
+
+    assert state.locked > 0, "the hosts that just moved are not locked"
+    assert state.locked <= state.n_live
+    world.step(60.0)
+    assert state.locked <= state.n_live
+
+
+def test_a_synchronised_population_moves_all_at_once_and_a_jittered_one_does_not() -> None:
+    """``timer_jitter=0`` is a fleet restarted by one deploy. The difference is
+    the whole point of the rung: a model stable against jittered selectors and
+    unstable against synchronised ones has found a real edge."""
+    moved = {}
+    for jitter in (0.0, 1.0):
+        world = scenario(step_s=1.0).build()
+        src, dst = a_scope(world)
+        state = world.add_scope(
+            src,
+            dst,
+            params=HostParams(
+                n_hosts=4_000, mbps_per_host=1.0, resample_s=50.0, timer_jitter=jitter
+            ),
+        )
+        world.publish_advisory(src, dst, {state.path_ids[0]: 1.0})
+        world.step(1.0)
+        moved[jitter] = state.counts[0] / max(1, state.n_live)
+
+    assert moved[0.0] == pytest.approx(0.0, abs=0.01), "the shared timer fired early"
+    assert 0.0 < moved[1.0] < 0.2, "independent timers move a fraction per step"
+
+
+def test_a_jittered_mirror_reaches_the_population_over_its_window() -> None:
+    """Rung 4. An advisory currently lands on every host in the same instant;
+    a real mirror reaches its readers over a window."""
+    world = scenario(step_s=1.0).build()
+    src, dst = a_scope(world)
+    state = world.add_scope(
+        src, dst, params=HostParams(n_hosts=8_000, mbps_per_host=1.0, mirror_jitter_s=100.0)
+    )
+    world.publish_advisory(src, dst, {state.path_ids[0]: 1.0})
+    world.step(1.0)
+    early = state.counts[0] / max(1, state.n_live)
+    assert state.mirror_frac < 0.2
+    world.step(150.0)
+
+    assert state.mirror_frac == 1.0
+    assert state.counts[0] / max(1, state.n_live) > early + 0.3
+
+
+def test_the_ladder_is_reproducible_from_the_seed() -> None:
+    """Invariant 4. Every rung carries state across steps -- the dwell ledger,
+    the mirror -- and carried state is where determinism goes to die."""
+    digests = []
+    for _ in range(2):
+        world, state, _ = _placed(
+            2_000,
+            k_paths=2,
+            hysteresis=0.02,
+            dwell_s=20.0,
+            timer_jitter=0.3,
+            mirror_jitter_s=40.0,
+            resample_s=10.0,
+            seconds=120.0,
+        )
+        digests.append(world.hosts.digest())
+
+    assert digests[0] == digests[1]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"k_paths": 0},
+        {"eps_set": 1.5},
+        {"hysteresis": -0.1},
+        {"dwell_s": -1.0},
+        {"timer_jitter": 2.0},
+        {"mirror_jitter_s": -1.0},
+    ],
+)
+def test_impossible_discipline_is_refused(changes: dict) -> None:
+    with pytest.raises(ValueError):
+        HostParams(**changes)
