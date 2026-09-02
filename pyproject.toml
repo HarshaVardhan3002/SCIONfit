@@ -25,6 +25,11 @@ dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov", "ruff", "mypy>=1.8", "import-linter>=2.0", "pre-commit"]
+# Charts and the PDF. Deliberately not a runtime dependency: core/ keeps its
+# numpy-only rule and the reporting stack must not become a substrate
+# dependency (ADR 0018). Both are pure wheels on every platform we run on, and
+# neither needs a browser or a GTK stack.
+report = ["matplotlib>=3.8", "reportlab>=4.0"]
 
 [project.scripts]
 scionarena = "scionarena.cli:main"
@@ -63,6 +68,13 @@ strict = true
 # result files it produces are the input to every number downstream. The
 # rest of the tree stays best-effort, per CLAUDE.md.
 files = ["src/scionarena/core", "src/scionarena/exposure", "src/scionarena/bench"]
+
+# The reporting extra ships no type stubs, and neither library is on the
+# substrate's dependency path: they are imported inside the functions that draw
+# (ADR 0018), so an install without them still runs everything else.
+[[tool.mypy.overrides]]
+module = ["reportlab.*", "matplotlib.*"]
+ignore_missing_imports = true
 
 [tool.importlinter]
 root_package = "scionarena"

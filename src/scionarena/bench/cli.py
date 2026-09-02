@@ -4,6 +4,7 @@
     scionarena bench plan --models mypkg.mine:Model  # what would run, for free
     scionarena bench run   --models mypkg.mine:Model --tier dev --out results/
     scionarena bench show  results/                  # read what is there
+    scionarena bench report results/ --out report.pdf  # the artefact
 
 ``plan`` before ``run`` is the cheap check that a suite is the size you think it
 is: the grid is 1,458 points and one-at-a-time is sixteen, and the difference at
@@ -18,8 +19,10 @@ import sys
 from pathlib import Path
 
 from ..exposure.loading import ModelLoadError
+from ..instrument.figures import MissingReportDeps
 from ..instrument.metrics import FAMILIES, REGISTRY
 from .axes import AXES
+from .report import AXIS_METRICS, build_pdf, gather, summary_lines
 from .results import load_results
 from .sweep import SweepSpec, plan, run_sweep, summarise
 
@@ -94,6 +97,24 @@ def main(argv: list[str] | None = None) -> int:
     p_show.add_argument("--metric", default="swing")
     p_show.add_argument("--json", action="store_true")
 
+    p_report = sub.add_parser("report", help="render a results directory to a PDF")
+    p_report.add_argument("directory")
+    p_report.add_argument("--out", default="report.pdf")
+    p_report.add_argument(
+        "--conformance",
+        default=None,
+        help="a card from `scionfit check --format json`. Without one the report "
+        "cannot say whether the model's declarations were checked, and says so.",
+    )
+    p_report.add_argument(
+        "--axis-metric",
+        action="append",
+        default=None,
+        dest="axis_metrics",
+        help="metric to draw an axis-response figure for; repeatable. "
+        f"Default: {', '.join(AXIS_METRICS)}",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "axes":
@@ -102,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         return _metrics(args)
     if args.command == "show":
         return _show(args)
+    if args.command == "report":
+        return _report(args)
 
     try:
         spec = _spec(args)
@@ -156,7 +179,12 @@ def _metrics(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 {
-                    name: {"family": m.family, "doc": m.doc, "higher_is_better": m.higher_is_better}
+                    name: {
+                        "family": m.family,
+                        "doc": m.doc,
+                        "higher_is_better": m.higher_is_better,
+                        "support": m.support,
+                    }
                     for name, m in sorted(REGISTRY.items())
                 },
                 indent=2,
@@ -166,13 +194,17 @@ def _metrics(args: argparse.Namespace) -> int:
     for family in FAMILIES:
         print(f"{family}")
         for name, entry in sorted(REGISTRY.items()):
-            if entry.family == family:
+            if entry.family == family and not entry.support:
                 if entry.higher_is_better is None:
                     arrow = "closer to zero is better"
                 else:
                     arrow = "higher is better" if entry.higher_is_better else "lower is better"
                 print(f"    {name:<20} {entry.doc}")
                 print(f"    {'':<20} ({arrow})")
+        for name, entry in sorted(REGISTRY.items()):
+            if entry.family == family and entry.support:
+                print(f"    {name:<20} {entry.doc}")
+                print(f"    {'':<20} (support: how much is behind the numbers above)")
         print()
     print("an accuracy metric reports one value per horizon, as name.h0 / name.h60 / name.h300")
     return 0
@@ -200,6 +232,28 @@ def _show(args: argparse.Namespace) -> int:
             f"{row[args.metric]:>10.4g}  {span} {mark}"
         )
     print("\nmedian over repeats; * mandatory baseline (Master Spec 28)")
+    return 0
+
+
+def _report(args: argparse.Namespace) -> int:
+    """Render a directory to a PDF, and echo to the terminal what it says."""
+    directory = Path(args.directory)
+    try:
+        out = build_pdf(
+            directory,
+            args.out,
+            conformance=args.conformance,
+            axis_metrics=tuple(args.axis_metrics or AXIS_METRICS),
+        )
+    except MissingReportDeps as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    for line in summary_lines(gather(list(load_results(directory)))):
+        print(line)
+    print(f"\n{out}")
     return 0
 
 

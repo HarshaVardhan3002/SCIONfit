@@ -138,13 +138,18 @@ class Metric:
     #: over-confident model top. Carried because guessing from the name is how
     #: "coverage" gets sorted backwards.
     higher_is_better: bool | None = False
+    #: A *count*, not a score: how many observations the metrics of this family
+    #: were computed over. Registered through the same decorator so it lands on
+    #: every cell without the runner learning its name, and flagged so a report
+    #: renders it as a denominator rather than ranking models by it (ADR 0018).
+    support: bool = False
 
 
 REGISTRY: dict[str, Metric] = {}
 
 
 def metric(
-    name: str, family: str, *, higher_is_better: bool | None = False
+    name: str, family: str, *, higher_is_better: bool | None = False, support: bool = False
 ) -> Callable[[Callable[[MetricInput], Any]], Callable[[MetricInput], Any]]:
     """Register a metric. The runner never enumerates names.
 
@@ -163,6 +168,7 @@ def metric(
             doc=(fn.__doc__ or "").strip().splitlines()[0] if fn.__doc__ else "",
             fn=fn,
             higher_is_better=higher_is_better,
+            support=support,
         )
         return fn
 
@@ -568,3 +574,65 @@ def grid_uniform(data: MetricInput) -> float | None:
     later has no other way to find that out.
     """
     return float(data.series.uniform())
+
+
+# ==========================================================================
+# support -- how much was behind each family's numbers, so a report can say
+# ==========================================================================
+#
+# Not scores. A report divides by these to decide how many digits a value has
+# earned (ADR 0018), and the reason there are four rather than one is that the
+# four families have four different denominators: a coverage figure taken from
+# three repeats of a run that scored four forecasts each is not a figure from
+# twelve observations of anything.
+
+
+@metric("n_scored", "accuracy", higher_is_better=True, support=True)
+def n_scored(data: MetricInput) -> Mapping[str, float] | None:
+    """Forecasts that had a truth to be scored against, per horizon.
+
+    Not the number made: a forecast whose horizon falls past the end of the run
+    is dropped rather than scored against the last sample, so the long horizons
+    are legitimately thinner than the short ones and the report has to be able
+    to see by how much.
+    """
+    strata = _by_horizon(data)
+    if not strata:
+        return None
+    return {horizon: float(len(pairs)) for horizon, pairs in strata.items()}
+
+
+@metric("n_cost_samples", "decision", higher_is_better=True, support=True)
+def n_cost_samples(data: MetricInput) -> float | None:
+    """Samples where realised and best-fixed cost were both finite, after warmup.
+
+    The warmup is subtracted because every metric in this family subtracts it.
+    A support count that did not would report forty samples behind a regret of
+    ``None``, which is the one thing a denominator must never do.
+    """
+    realised, _ = _cost_pair(data)
+    return float(max(0, realised.size - int(data.band["warmup"])))
+
+
+@metric("n_samples", "stability", higher_is_better=True, support=True)
+def n_samples(data: MetricInput) -> float | None:
+    """Samples the detectors had, after the warmup they discard.
+
+    The warmup is subtracted because the stability metrics do not see it, and a
+    denominator that counted it would say a run measured more than it did.
+    """
+    total = len(data.series)
+    if total == 0:
+        return None
+    return float(max(0, total - int(data.band["warmup"])))
+
+
+@metric("n_decisions", "operational", higher_is_better=True, support=True)
+def n_decisions(data: MetricInput) -> float | None:
+    """Decision rounds whose latency was recorded.
+
+    The denominator under every percentile above it: ``decision_p95_s`` over
+    three rounds is the slowest of three, and printing it to four decimals
+    would say otherwise.
+    """
+    return float(len(data.latency_s))

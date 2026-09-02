@@ -264,6 +264,26 @@ def _config(spec: SweepSpec, cell: Cell, seed: int) -> LoopConfig:
     )
 
 
+def _declared(model: Any) -> dict[str, Any]:
+    """What the model says about itself, as the report will print it.
+
+    Booleans and the three identifying strings, and nothing else: ``extra`` is
+    a free-form dict a model author may put anything in, including something
+    unserialisable, and a cell that failed to write because of it would lose a
+    run over a field no report reads.
+    """
+    caps = getattr(model, "capabilities", None)
+    if caps is None:
+        return {}
+    fields = vars(caps)
+    out: dict[str, Any] = {k: v for k, v in fields.items() if isinstance(v, bool)}
+    for key in ("name", "version", "authors", "notes"):
+        value = fields.get(key)
+        if isinstance(value, str) and value:
+            out[key] = value
+    return out
+
+
 def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
     """Run one cell to a result. Never raises for a model's own failure.
 
@@ -285,10 +305,12 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
         repeat=cell.repeat,
         seed=seed,
         scenario=scenario.name,
+        tier=spec.tier,
     )
     try:
         model = load_model(cell.model)
         result.label = getattr(model.capabilities, "name", cell.model)
+        result.capabilities = _declared(model)
         world = scenario.build()
         result.substrate_digest = world.digest()
         scopes = busiest_scopes(world, spec.scopes)

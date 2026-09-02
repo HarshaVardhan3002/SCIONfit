@@ -232,9 +232,13 @@ src/scionarena/
   backends/        tier adapters behind one interface
     replay.py  analytical.py  dqnsim.py  testbed.py
   instrument/
-    events.py  metrics.py  detectors.py  report.py
+    sampler.py       samples off the world's clock, and the truth to score against
+    metrics.py       the registry: four families, plus a support count per family
+    detectors.py     swing, oscillation, flap, convergence
+    report.py        the interactive HTML view, hand-written SVG, no dependency
+    figures.py       the PDF's charts (matplotlib, [report] extra, imported lazily)
   conformance/     probes, runner, report card      (M5)
-  bench/           scenarios, scoring, leaderboard  (M6)
+  bench/           axes, sweep, results, score, report  (M6)
   gym/             gymnasium env, wrappers, vec     (M7)
   agent/           LLM loop, memory + context tests (M8)
   deploy/          production shim                  (M9)

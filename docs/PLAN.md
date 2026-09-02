@@ -235,6 +235,7 @@ scionarena bench axes                        # what gets varied, and how
 scionarena bench plan  --models mypkg:Model  # what would run, for free
 scionarena bench run   --models mypkg:Model --tier dev --out results/
 scionarena bench show  results/
+scionarena bench report results/ --out report.pdf     # Phase 4
 ```
 
 **The six axes all exist now.** Population, defector fraction, the mechanism ladder, paths
@@ -342,26 +343,72 @@ gateways, because those two populations are not running the same mechanism.
 
 ---
 
-## Phase 4 — the report
+## Phase 4 — the report — **landed**
 
-**Charts.** matplotlib, behind a `[report]` extra. `core/` keeps its numpy-only rule; the
-reporting stack is not a substrate dependency and must not become one.
+`bench/report.py` and `instrument/figures.py`, behind the `[report]` extra
+(matplotlib + reportlab, both pure wheels, neither a substrate dependency).
+`scionarena bench report results/ --out report.pdf`. ADR 0018.
 
-**PDF.** matplotlib figures embedded into a document assembled with reportlab. Both are
-pure wheels on Windows, neither needs a browser or a GTK stack, and the failure mode of an
-HTML-to-PDF converter — silently different output from the interactive view — is the one
-thing a benchmark report cannot afford. The existing HTML report stays as the interactive
-view; the PDF is the artefact a user attaches to a paper.
+**The report is a pure function of a results directory.** Nothing in it builds a substrate,
+loads a model, or recomputes a metric, so a report can be regenerated months later from a
+directory copied off a cluster, on a machine where the model's own dependencies are absent.
+The price is that anything it says had to be **recorded** when the cell ran, and two things
+it needed were not: the tier and the model's declaration of what it can do. Both now join
+`CellResult`. Re-deriving them at report time would have been easy and wrong the same way —
+the suite object available when the PDF is built is the *current* one, and printing its tier
+against an older cell produces a report that is internally consistent and false.
 
-**Contents.** What was tested (scenario, tier, seed, substrate digest, every axis value,
-and the probe-limit regime the run assumed), what the model declared it could do, the four
-metric families with their figures, the baseline comparison, and the conformance verdicts
-with their `DECLARED_ABSENT` / `FALSE_CLAIM` distinction intact. A reader who has the PDF
-and the seed can reproduce the run.
+**Conformance arrives as a file, not as an import.** `bench` and `conformance` are siblings
+and neither may import the other, so the verdicts travel as
+`scionfit check --format json --out card.json` into `bench report --conformance card.json`.
+The PDF renders the recorded status *string*, which is what keeps `DECLARED_ABSENT` and
+`FALSE_CLAIM` apart all the way to the page — the one distinction conformance exists to draw
+and the easiest to erase exactly there, where a reader wants a green tick. A report built
+without a card says so in the section where the verdicts would have been; silence would read
+as "nothing was wrong".
 
-**One requirement that is easy to lose.** The report states its own uncertainty. A metric
-computed over few observations is labelled as such rather than printed to three decimals.
-The harness's whole argument is that it is honest about what it knows.
+**The number is printed to as many digits as it has earned.** A `Reading` carries the value,
+the repeats behind it and the observed range, and renders itself: no observations →
+`not measured`, never `0.000`; fewer than three repeats or fewer than twenty observations
+inside the run → two significant figures with the count beside it and a † in the margin;
+otherwise four figures and the observed min..max. Neither threshold is a round number chosen
+for the look of it. Three is `SweepSpec.repeats`, which is three because the headline metric
+was measured *bimodal* across seeds. Twenty is where a percentile stops being one: the 95th
+percentile of nineteen observations is the largest of them.
+
+Repeats are only half of it, so the registry grew one **support** metric per family —
+`n_scored`, `n_cost_samples`, `n_samples`, `n_decisions` — flagged `support=True` and
+registered through the same decorator, so they land on every cell without the runner
+learning their names. One per family rather than one overall: a coverage figure from three
+repeats of a run that scored four forecasts each is not a figure from twelve observations of
+anything.
+
+**The report closes by saying what it does not claim** — regret is an upper bound, the tier
+is named, `oat` mode measured no interaction between axes, and there is no loss curve
+because the harness evaluates trained models rather than training them.
+
+### What running it turned up
+
+- **A support count that disagreed with its own family.** `n_cost_samples` reported forty
+  samples behind a regret of `None`: it counted the finite pairs while every metric in that
+  family discards the detector warmup first. A denominator that contradicts its numerator is
+  worse than no denominator.
+- **Zero observations rendered as a score of zero.** At `cycles=40` the warmup ate the whole
+  episode, the detectors returned `swing = 0.0` over zero samples, and the first draft
+  printed it — which would have ranked that model the most stable in the suite. A known-zero
+  support now renders `no observations`, and it is a different state from `not measured`.
+- **A metric that returns a mapping for one model and `None` for another lands under both
+  its bare name and its stratified ones.** A point estimator scores no coverage, so
+  `coverage` was `None` for it while `coverage.h60` existed for the distributional models,
+  and every accuracy table grew a leading column of "not measured" headed `value`.
+- **Horizons sorted lexicographically read h0, h300, h60** — inviting exactly the misreading
+  that stratifying by horizon exists to prevent.
+
+Verified end to end on a 90-cell sweep with a submitted model beside the five mandatory
+baselines: a 13-page PDF in which `ReferenceStochastic` beats every baseline on
+`regret_ratio` (1.48 against 2.98 … 48.7), `Tier0Only` shows coverage 0.29 against nominal
+0.8, and the staleness axis separates the models that degrade (`LatestSample`, `Tier0Only`)
+from the two that do not.
 
 ---
 

@@ -73,6 +73,15 @@ class CellResult:
     repeat: int
     seed: int
     scenario: str
+    #: The tier this cell ran at. Recorded rather than read off the suite when
+    #: the report is built, because the suite object available then is the
+    #: *current* one and printing its tier against an older cell produces a
+    #: report that is internally consistent and false (ADR 0018).
+    tier: str = ""
+    #: What the model declared about itself, as booleans. Empty for a cell
+    #: recorded before this existed, and a report prints that as "unrecorded"
+    #: rather than as "declares nothing".
+    capabilities: dict[str, Any] = field(default_factory=dict)
     #: What the substrate was when this ran. Recorded, not enforced: forcing a
     #: re-run on a mismatch would invalidate a week of stress-tier results that
     #: may be exactly what somebody wants to compare against.
@@ -98,6 +107,8 @@ class CellResult:
             "repeat": self.repeat,
             "seed": self.seed,
             "scenario": self.scenario,
+            "tier": self.tier,
+            "capabilities": dict(self.capabilities),
             "substrate_digest": self.substrate_digest,
             "metrics": dict(self.metrics),
             "wall_clock_s": round(self.wall_clock_s, 4),
@@ -117,6 +128,8 @@ class CellResult:
             "repeat",
             "seed",
             "scenario",
+            "tier",
+            "capabilities",
             "substrate_digest",
             "metrics",
             "wall_clock_s",
