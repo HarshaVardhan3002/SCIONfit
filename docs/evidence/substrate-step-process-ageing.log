@@ -1,0 +1,12 @@
+realistic tier, step_s=1.0, one fresh world per row
+
+     600s, young process           2.13 ms/step
+    3600s, same process            4.41 ms/step
+     600s again, aged process      4.46 ms/step
+     600s after 45s idle           4.31 ms/step
+     600s, draining every step     4.44 ms/step
+
+the same 600 s world costs 2.1x more in the aged process,
+and neither an idle gap nor draining the re-signing feed brings it back.
+A new process is immediately fast again, which is what makes this a
+property of benchmarks/run.py's measurement order rather than of core/.

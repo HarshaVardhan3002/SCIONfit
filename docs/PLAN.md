@@ -152,7 +152,20 @@ it conditions on it. Record the narrower claim; Phase 6's `Demand` split sharpen
 
 ---
 
-## Phase 1 — a model that is not ours
+## Phase 1 — a model that is not ours — **landed**
+
+Delivered as ADR [0013](adr/0013-a-model-enters-as-an-import-path.md), `exposure/loading.py`
+and `docs/MODELS.md`. `scionarena models <spec>` loads a model and prints what it will be
+tested on without building a scenario; `scionarena conformance check`, `scionarena demo`
+and the UI field all take the same spec, and the reference models became aliases for import
+paths so there is one resolution rule rather than two. A spec ending in `.py` is read as a
+file, so a single script with no packaging is loadable.
+
+Two things the section below did not anticipate. Splitting `module:attribute` at the first
+colon is wrong on Windows, where `C:/models/mine.py:MyModel` resolved to a module named
+`C` and the error told the user to `pip install C`; the separator is the last colon.
+And the demo keyed its figure series on `capabilities.name`, so two models declaring the
+same name drew as one line — `labels_for` disambiguates by spec.
 
 Today `demo.py` resolves models from `REFERENCE_MODELS`, a dictionary in the repo. There
 is no path by which an outsider's model enters the harness. This is the single change that
@@ -175,6 +188,36 @@ what their model will and will not be tested on.
 **Deliverables.** `scionarena bench --model pkg.mod:Class`; the same field in the UI;
 `docs/MODELS.md` with a fifteen-line worked example of a conforming model and the
 capability declaration that goes with it.
+
+---
+
+## Blocking Phase 2 — the performance gate measures its own process
+
+Found while running the gate for Phase 1, on a branch touching no file under `core/`:
+`realistic.substrate_step_s` reports 4.5 ms against a 2.09 ms baseline, a 145% regression,
+and it reproduces with the branch stashed. The cause is not the code under test. After a
+few million segment re-signings, *everything in the process* is about twice as slow and
+stays that way — a freshly built world run for 600 simulated seconds costs 2.1 ms per step
+in a young process and 4.5 ms in an aged one.
+
+Ruled out by measurement, each separately: the re-signing accumulator (draining every step
+changes nothing), garbage collection (`gc.disable()` changes nothing), `Segment.__dict__`
+(`slots=True` changes nothing), CPU downclocking (45 s of idle does not recover it, while a
+new process is instantly fast), and the simulation state (work per step is flat — 1.64 M
+re-signings in every 600 s window, `n_segments` never moves).
+
+`benchmarks/run.py` measures `substrate_step_s` **last**, after four allocation-heavy
+benchmarks in the same process, and B1 raised the churn those produce sixty-fold. So the
+gated number is partly a function of how much allocation preceded it, which is not a
+property of the code the gate protects.
+
+**Fix.** Measure each metric in a process the previous metric has not aged, then re-record.
+Do not widen the tolerance: a gate that passes by measuring nothing is worse than a red one.
+Evidence and the ruling-out runs: `docs/evidence/substrate_step_process_ageing.py`.
+
+This blocks Phase 2 rather than Phase 1 — Phase 1 changes no substrate code — but it blocks
+it hard, because the sweep engine's whole claim is that two machines running the same suite
+produce comparable numbers.
 
 ---
 
