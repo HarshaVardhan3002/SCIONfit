@@ -55,6 +55,7 @@ __all__ = [
     "EXTENSION_PREFIX",
     "TopologySpec",
     "SearchSpec",
+    "ProbeLimits",
     "TimelineEvent",
     "Scenario",
     "Substrate",
@@ -155,6 +156,50 @@ class TopologySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ProbeLimits:
+    """How much probing the deployment permits, per limited resource.
+
+    These were three constants in ``exposure/tools.py`` presented as though they
+    were protocol facts. They are not. The SCMP specification says only that
+    SCMP *may* be subject to rate limiting, and the audited router implements no
+    limiter at all -- there is no token bucket anywhere in the tree. Open
+    question Q6 asked what the real limit is; the answer is that there isn't
+    one, and what a deployment applies is a per-deployment operational choice
+    that may be zero.
+
+    So they belong to the scenario, beside :class:`BeaconPolicy` and
+    ``LinkParams``, for the reason ADR 0007 gives: two runs made under different
+    assumptions about how expensive information is are not the same experiment,
+    and with the numbers buried in the exposure layer nothing in either run's
+    output said they differed. Every budget result the harness has produced is
+    conditional on these, and now says so.
+
+    The defaults are the old constants, so nothing moves until a scenario asks.
+    Note that they are stated as plain numbers rather than as ``RateLimit``:
+    that type lives in ``exposure`` and ``core`` may not import upwards.
+    """
+
+    #: echoes per second, answered by the border router
+    scmp_calls: float = 5.0
+    scmp_per_s: float = 1.0
+    #: bandwidth tests, which are far dearer because they are real traffic
+    bwtest_calls: float = 1.0
+    bwtest_per_s: float = 30.0
+    #: path-server lookups, per destination AS
+    path_server_calls: float = 2.0
+    path_server_per_s: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("scmp", "bwtest", "path_server"):
+            calls = float(getattr(self, f"{name}_calls"))
+            per_s = float(getattr(self, f"{name}_per_s"))
+            if calls < 0.0:
+                raise ValueError(f"{name} allowance cannot be negative")
+            if per_s <= 0.0:
+                raise ValueError(f"{name} window must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class SearchSpec:
     """The caps on path composition.
 
@@ -218,13 +263,19 @@ class Scenario:
     duration_s: float = 3_600.0
     #: How much simulated time one :meth:`Substrate.step` covers.
     step_s: float = 1.0
-    #: Which identifier ``path_id`` aliases. Neither is blessed until Q1 is
-    #: answered; a scenario must say, and a robust model works under both.
+    #: Which identifier ``path_id`` aliases. ``structural`` is the documented
+    #: default because it is what the deployed stack does: Q1 is resolved, and
+    #: ``snet.Fingerprint`` hashes the interface sequence alone. ``crypto_bound``
+    #: stays available -- it is what a model keying on the raw path or on segment
+    #: IDs effectively sees, which is the hazard R4 is re-aimed at.
     identity_policy: str = "structural"
     topology: TopologySpec = field(default_factory=TopologySpec)
     beaconing: BeaconPolicy = field(default_factory=BeaconPolicy)
     search: SearchSpec = field(default_factory=SearchSpec)
     link: LinkParams = field(default_factory=LinkParams)
+    #: What probing costs the model in permission, as opposed to in budget.
+    #: Per-deployment rather than a protocol constant -- see :class:`ProbeLimits`.
+    probe_limits: ProbeLimits = field(default_factory=ProbeLimits)
     background: BackgroundParams = field(default_factory=BackgroundParams)
     #: The population every scope gets unless the caller overrides it. In the
     #: file for the same reason the congestion constants are: two runs that
@@ -296,6 +347,7 @@ class Scenario:
             ("beaconing", BeaconPolicy),
             ("search", SearchSpec),
             ("link", LinkParams),
+            ("probe_limits", ProbeLimits),
             ("background", BackgroundParams),
             ("hosts", HostParams),
         ):

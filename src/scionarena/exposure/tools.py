@@ -20,6 +20,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from scionarena.core.scenario import ProbeLimits
+
 from .budget import Cost, RateLimit
 from .contracts import InterfaceAttrs, PathRef
 from .streams import STREAMS, RawEvent, Subscription
@@ -33,6 +35,7 @@ __all__ = [
     "tool_definitions",
     "validate_arguments",
     "PROBE_KINDS",
+    "DEFAULT_PROBE_LIMITS",
 ]
 
 #: Cheap to expensive. The whole point of the parameter.
@@ -64,10 +67,25 @@ PUBLISH_BYTES = 128
 #: rate-limited model discovers it can poll the limiter for free information.
 REFUSAL_COST = Cost(wall_clock_s=0.001, nbytes=64)
 
-#: SCMP is answered by the border router, so that is what runs out.
-SCMP_LIMIT = RateLimit(calls=5, per_s=1.0)
-BWTEST_LIMIT = RateLimit(calls=1, per_s=30.0)
-PATH_SERVER_LIMIT = RateLimit(calls=2, per_s=1.0)
+#: The limits a run assumed, when a caller has no scenario to hand. Every real
+#: call resolves them from ``Scenario.probe_limits`` instead: there is no rate
+#: limiter in the SCION router and the specification only says there *may* be
+#: one, so what a deployment permits is a scenario parameter and Q6 is closed
+#: that way rather than by picking a number and calling it a protocol fact.
+DEFAULT_PROBE_LIMITS = ProbeLimits()
+
+
+def scmp_limit(limits: ProbeLimits) -> RateLimit:
+    """SCMP is answered by the border router, so that is what runs out."""
+    return RateLimit(calls=limits.scmp_calls, per_s=limits.scmp_per_s)
+
+
+def bwtest_limit(limits: ProbeLimits) -> RateLimit:
+    return RateLimit(calls=limits.bwtest_calls, per_s=limits.bwtest_per_s)
+
+
+def path_server_limit(limits: ProbeLimits) -> RateLimit:
+    return RateLimit(calls=limits.path_server_calls, per_s=limits.path_server_per_s)
 
 
 class ToolError(Exception):
@@ -165,7 +183,7 @@ class ToolContext(Protocol):
 
 Handler = Callable[[ToolContext, Mapping[str, Any]], dict[str, Any]]
 CostFn = Callable[[Mapping[str, Any], Mapping[str, Any]], Cost]
-LimitFn = Callable[[Mapping[str, Any]], RateLimit | None]
+LimitFn = Callable[[Mapping[str, Any], ProbeLimits], RateLimit | None]
 KeyFn = Callable[[ToolContext, Mapping[str, Any]], str]
 
 
@@ -178,7 +196,7 @@ class ToolSpec:
     parameters: Mapping[str, Any]
     handler: Handler
     cost: CostFn
-    limit: LimitFn = lambda args: None
+    limit: LimitFn = lambda args, limits: None
     key: KeyFn = lambda ctx, args: ""
     refusal_cost: Cost = REFUSAL_COST
     #: Charged before the handler runs, so a call cannot be afforded only
@@ -318,8 +336,10 @@ def probe_cost(kind: str, rtt_s: float) -> Cost:
     return Cost(rtt_s, ECHO_PROBE_UNITS, ECHO_BYTES)
 
 
-def _probe_limit(args: Mapping[str, Any]) -> RateLimit | None:
-    return BWTEST_LIMIT if args.get("kind") == "bandwidth" else SCMP_LIMIT
+def _probe_limit(args: Mapping[str, Any], limits: ProbeLimits) -> RateLimit | None:
+    if args.get("kind") == "bandwidth":
+        return bwtest_limit(limits)
+    return scmp_limit(limits)
 
 
 def _get_history(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -384,7 +404,7 @@ TOOLS: dict[str, ToolSpec] = {
         },
         handler=_query_paths,
         cost=_query_cost,
-        limit=lambda args: PATH_SERVER_LIMIT,
+        limit=lambda args, limits: path_server_limit(limits),
         key=lambda ctx, args: f"ps:{args['dst']}",
     ),
     "probe_path": ToolSpec(

@@ -3,34 +3,66 @@
 Everything the project is standing on that has not been verified. `grep -rn "ASSUMPTION("
 src/` must agree with this file.
 
-Status: **OPEN** · **ASKED** · **RESOLVED**
+Status: **OPEN** · **ASKED** · **PARTIAL** · **RESOLVED**
 
 ---
 
-## Q1 — Is the SCION path fingerprint stable across re-signing? · OPEN · blocks M1, M5
+## Q1 — Is the SCION path fingerprint stable across re-signing? · RESOLVED · unblocks M1, M5
 
 If a path segment is re-beaconed with identical interfaces and new cryptographic material,
 does the identifier a host sees change?
 
-**Why it matters.** If it changes, a model keying per-path memory on it silently discards
-its history every refresh cycle while its outputs still look plausible. That is identity
-amnesia and it would be a real deployment risk. If it does not change, the risk is
-hypothetical and R4 becomes a robustness check rather than a defect detector.
+**Answer: no. The fingerprint is structural.** `snet.Fingerprint` is a SHA-256 over the
+ordered sequence of `(ISD-AS, interface-ID)` pairs and contains no cryptographic material
+whatsoever. The path combinator additionally collapses multiple constructions of the same
+interface sequence by default, exposing distinct segment IDs and MACs only to a caller
+that explicitly asks (`findAllIdentical=true`). It survives re-beaconing by design.
 
-**Provisional handling.** Both behaviours implemented behind `identity_policy:
-"structural" | "crypto_bound"`. Neither is the blessed default. R4 runs both and reports
-the delta. **Do not hardcode either.**
+Answered from the `scionproto/scion` source tree during the v1.2 harness re-review, not
+by a mentor. Recorded here rather than left open because the branch it selects was already
+written down: "if it does not change, the risk is hypothetical and R4 becomes a robustness
+check rather than a defect detector." That is now the situation.
 
-**Ask.** In the deployed SCION stack, is the path fingerprint a hash of the interface
-sequence alone, or does it incorporate segment timestamps or signatures?
+**What follows.**
 
-## Q2 — Is per-link offered load observable or estimable? · OPEN · blocks M1, M5
+- `identity_policy` has a documented default: **`structural`**, because that is what the
+  deployed stack does. Both policies stay implemented; they are cheap, and the interesting
+  comparison has moved rather than disappeared.
+- **R4 is re-aimed.** A model that collapses under `crypto_bound` is not wrong about
+  deployment, because `crypto_bound` has no correspondent in the real stack, so failing it
+  would be a false positive against the thing conformance claims to measure. The deployment
+  hazard is a model keying memory on something that is *not* the fingerprint — the raw path
+  bytes, the dataplane path object, or the segment IDs `findAllIdentical=true` exposes. The
+  probe becomes "does this model key on the identifier the protocol designates", scored as
+  a hygiene grade rather than a conformance failure.
+- With the beacon interval corrected to 5 s (see the B1 note below), the sharper question
+  is no longer `structural` versus `crypto_bound` but **how fast identity can churn before
+  a model that keys correctly still loses**. The substrate can already run that.
+
+**Related correction, found the same way.** `BeaconPolicy.interval_s` defaulted to 300 s;
+upstream originates, propagates and registers every **5 s**. `lifetime_s` was already right
+— `DefaultMaxExpTime = 63` gives 64 × 337.5 s = exactly 6 h. Hop-field expiry is therefore
+quantised to `EXPIRY_QUANTUM_S = 337.5`, one of 256 discrete steps, not a float. Every
+result recorded at the old cadence understates identity churn by more than an order of
+magnitude.
+
+## Q2 — Is per-link offered load observable or estimable? · PARTIAL · blocks M5
 
 R6 and the entire demand-conditioning argument assume a model can know or infer how much
 traffic is on a link. If it fundamentally cannot, the response model conditions on a latent
 proxy instead and probes R6 and R7 need redesigning.
 
-**Ask.** Can an end host, or a central node with cooperating hosts, observe or reasonably
+**Partial answer, from the protocol.** Not *directly* observable: beacon metadata carries
+only static capacity, and the data plane exposes no per-hop state to endpoints. But it is
+*estimable*, and Master Spec v1.2 §7.1 states the condition exactly — a unit's state is
+identifiable iff its column in the observed path-incidence matrix is distinguishable from
+its neighbours'. So R6 and R7 do not need redesigning, but their claim is narrower than
+their names suggest: they hand the model a demand vector and check that it conditions on
+it. That is legitimate — a deployed oracle knows its own published shares — but it is not
+a test of whether the model can *infer* load. See also the `Demand.intended` /
+`Demand.realised` split, which is what would make it one.
+
+**Still to ask.** Can an end host, or a central node with cooperating hosts, observe or reasonably
 estimate per-link load? Does ID-INT in the testbed expose anything like this?
 
 ## Q3 — What is realistic scale for a deployed SCION ISD? · OPEN · blocks M1
@@ -55,13 +87,33 @@ The mapping onto SCION's ISD core, parent-child and peering structure is an assu
 
 **Provisional handling.** Documented mapping in an ADR, marked `ASSUMPTION(Q5)`.
 
-## Q6 — What is the real SCMP probe rate limit? · OPEN · blocks M2
+## Q6 — What is the real SCMP probe rate limit? · RESOLVED · unblocks M2
 
 Sets the tool cost model. If probing is far cheaper or dearer than assumed, every
 budget-related result shifts.
 
-**Ask.** What rate limit do border routers apply to SCMP echo, and is it configurable per
-AS?
+**Answer: there isn't one, and that is the finding.** The SCMP specification says only that
+SCMP *may* be subject to rate limiting. The audited router implements no limiter — there is
+no token bucket anywhere in the tree. What a deployment applies is a per-deployment
+operational choice, and it may be zero.
+
+Our three constants were invented:
+
+```python
+SCMP_LIMIT = RateLimit(calls=5, per_s=1.0)
+BWTEST_LIMIT = RateLimit(calls=1, per_s=30.0)
+PATH_SERVER_LIMIT = RateLimit(calls=2, per_s=1.0)
+```
+
+**What follows.** Not deletion — an unlimited probe budget is not a safer assumption than a
+limited one, and a harness where information is free measures nothing. The limits move out
+of `exposure/tools.py` and into `Scenario.probe_limits`, beside `BeaconPolicy` and
+`LinkParams`, with the old values as defaults. A run then states which regime it assumed,
+and M6 sweeps it as an axis rather than baking it in. Before this, two runs made under
+different assumptions about the price of information were indistinguishable in the report,
+and every budget result the harness has produced is conditional on exactly that number.
+
+Recorded as **per-deployment, unspecified upstream, must be swept.**
 
 ## Q7 — How many hosts share a source-destination pair? · OPEN · affects M3, M6
 

@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from scionarena.core.scenario import Scenario, TimelineEvent, TopologySpec
+from scionarena.core.scenario import ProbeLimits, Scenario, TimelineEvent, TopologySpec
 from scionarena.exposure import Budget, Cost, Session, tool_definitions
 from scionarena.exposure.session import _hex, drive_episode, run_episode
 from scionarena.exposure.tools import PROBE_KINDS, TOOLS, ToolSpec
@@ -40,6 +40,11 @@ def scenario(name: str = "m2", tier: str = "smoke", **changes) -> Scenario:
 
 def session(budget: Budget | None = None, **kwargs) -> Session:
     return Session(scenario().build(), budget=budget or Budget.unlimited(), seed=3, **kwargs)
+
+
+def session_with(limits: ProbeLimits) -> Session:
+    """A session whose scenario states what probing it permits."""
+    return Session(scenario().with_(probe_limits=limits).build(), budget=Budget.unlimited(), seed=3)
 
 
 def as_names(s: Session) -> list[str]:
@@ -567,6 +572,37 @@ def test_a_probe_can_time_out():
     assert "probe_timeout" in errors or any(
         None in r.data.get("samples_ms", []) for r in outcomes if r.ok
     ), "a saturated, degraded path lost nothing at all"
+
+
+def test_the_probe_allowance_is_a_scenario_parameter_not_a_protocol_constant():
+    """Q6. The three limits were constants in ``exposure/tools.py``, written as
+    though a border router enforced them. It does not: the SCMP specification
+    says only that SCMP *may* be rate limited, and there is no limiter in the
+    router at all. What a deployment permits is an operational choice that may
+    be zero.
+
+    So a run has to be able to state which regime it assumed, and the M6 sweep
+    has to be able to vary it. Before this, two runs made under different
+    assumptions about the price of information were indistinguishable in the
+    report -- and every budget result the harness produces is conditional on
+    exactly that number.
+    """
+    generous = session_with(ProbeLimits(scmp_calls=50.0, scmp_per_s=1.0))
+    stingy = session_with(ProbeLimits(scmp_calls=1.0, scmp_per_s=1.0))
+
+    def echoes_before_refusal(s: Session) -> int:
+        src, dst = busiest_scope(s)
+        path_id = s.call("query_paths", src=src, dst=dst).data["paths"][0]["path_id"]
+        allowed = 0
+        for _ in range(12):
+            if not s.call("probe_path", path_id=path_id).ok:
+                break
+            allowed += 1
+        return allowed
+
+    assert echoes_before_refusal(stingy) < echoes_before_refusal(generous)
+    assert Scenario().probe_limits == ProbeLimits(), "the defaults are the old constants"
+    assert "probe_limits" in Scenario().to_dict(), "a run that does not say is not reproducible"
 
 
 def test_a_bandwidth_probe_straddling_a_grid_tick_leaves_no_negative_load():

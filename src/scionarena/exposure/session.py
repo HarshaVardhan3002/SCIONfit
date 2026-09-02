@@ -271,7 +271,7 @@ class Session:
         # Rate limits are keyed on the thing that is limited -- the answering
         # border router, the destination path server -- so the key needs the
         # substrate and can itself fail on an argument that names nothing.
-        limit = spec.limit(args)
+        limit = spec.limit(args, self._world.scenario.probe_limits)
         if limit is not None:
             try:
                 key = spec.key(self, args)
