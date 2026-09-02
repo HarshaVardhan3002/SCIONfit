@@ -3,15 +3,23 @@
 **Status:** current plan of record. Supersedes the milestone ordering in `HANDOFF.md` §6
 for everything after M4; the milestone specs themselves are unchanged and still hold.
 
-Two inputs produced this document. The first is the product statement: *a person loads
-their own model, presses run, a stress-test sweep executes, and a PDF comes out saying
-what was tested and how the model did.* The second is the re-review of this repository at
-`7f83fe4` against Master Spec v1.2, in `mentor_feedback/`.
+Three inputs produced this document.
 
-They point the same way. The review closes two of our open questions, names four substrate
-defects, and identifies our harness as the rig two of its own milestones are specified in
-terms of. None of that changes the product; all of it changes what the product is allowed
-to print.
+The first is the product statement: *a person loads their own model, presses run, a
+stress-test sweep executes, and a PDF comes out saying what was tested and how the model
+did.* The second is the re-review of this repository at `7f83fe4` against Master Spec
+v1.2, in `mentor_feedback/`. The first two point the same way: the review closes two of
+our open questions, names four substrate defects, and identifies our harness as the rig
+two of its own milestones are specified in terms of. None of that changes the product; all
+of it changes what the product is allowed to print.
+
+The third arrived after Phase 4 landed and it sharpens the goal rather than adding to it.
+**The question is not "how does this model score". It is "which architecture survives, and
+which variant of it survives best".** A benchmark that ranks six models on one number
+answers neither. Everything Phase 7 adds — the cockpit, the lens, the architecture tag —
+exists to make that two-level question askable, and it changes what has to be recorded
+before there are results worth grouping. It is written up in full below, and the parts of
+it that cannot be retrofitted are pulled forward into Phases 5 and 6.
 
 ---
 
@@ -433,6 +441,46 @@ Four families, in this order. The order is by dependency, not by interest.
    structure improve the nowcast, and does anything beat persistence at +60 s / +300 s.
    Expect the second answer to be negative on many strata. That is a finding.
 
+### The adaptor is the user's to write, and ours to make small
+
+We cannot know what we are dealing with. A submitted model may be a scikit-learn regressor
+with a `fit`/`predict` pair, a torch module expecting a batched tensor, an LLM behind an
+HTTP call, or something with no Python surface at all. Guessing at that is how a harness
+acquires a directory of half-working importers, one per framework, each subtly wrong.
+
+So there are exactly two ways in, and the second is the normal one:
+
+1. **Native.** The model implements `PathModel` directly and takes everything the harness
+   exposes — the raw event log, the tool registry, the advisory channel. This is the right
+   choice for something written for this harness, and for nothing else.
+2. **An adaptor the user writes.** A translation layer that sits between their model and
+   the contract: it receives what we hand over, reshapes it into whatever their model eats,
+   and reshapes the answer back. They write it because only they know their model's
+   input and output. Our job is to make that layer **small, obvious, and testable before a
+   sweep is spent discovering it is wrong.**
+
+Most of what makes that possible already holds and should be stated as a guarantee rather
+than left as an accident: `exposure/contracts.py` imports nothing from the rest of the
+project (ADR 0008), a model enters as an import path with constructor arguments (ADR 0013),
+and every capability a model declares is cross-checked behaviourally rather than trusted.
+An adaptor author therefore depends on one module with no edges into the substrate.
+
+What is missing, and lands with this phase:
+
+- **A worked adaptor template** — one file, heavily commented, wrapping a deliberately
+  awkward model (a plain array-in/array-out regressor that knows nothing about paths),
+  showing where each of the contract's methods maps and where an honest
+  `Capabilities(...)=False` belongs.
+- **`scionarena adapt --check <spec>`** — runs the adaptor alone against synthetic input,
+  reports which contract methods it satisfies, which declarations its behaviour contradicts,
+  and what a sweep would refuse it for. Seconds, not a sweep. A conformance run answers the
+  same question properly; this is the thirty-second version that catches a shape error
+  before an hour of compute does.
+- **An architecture tag**, declared beside the capabilities and recorded on every cell.
+  Small, and it has to arrive *now* rather than later: it is the grouping key the two-level
+  comparison in Phase 7 needs, and adding it after there are results makes those results
+  ungroupable. See Phase 7, "architecture, then variant".
+
 ---
 
 ## Phase 6 — probes the review made possible
@@ -477,6 +525,203 @@ and creates the only available hook for a performativity probe.
 covers it, with the rest marked *not covered — deliberate* or *not covered — gap*. It is
 what would have caught B1 and surfaced Q1 and Q6 without a source audit, and v1.2 is far
 more mappable than v1.0 was.
+
+---
+
+## Phase 6½ — the flight has to be able to go wrong
+
+Pulled forward out of Phase 7, because a cockpit with no weather in it is a screensaver.
+
+**The scenario axis does not exist.** M6 lists ten scenarios — `steady`, `contention`,
+`diurnal`, `regime-shift`, `churn`, `outage`, `cold-start`, `defectors`, `budget-squeeze`,
+`slow-model` — and `bench/axes.py` has six axes, none of which is that list. The six vary
+*conditions*; a scenario is an *event schedule*. The substrate can already schedule events
+(ADR 0007) and the sweep has never been told to.
+
+**Recovery is not a metric we have, and it is half the question.** Everything in the
+registry scores an episode as a whole. The question the vision is actually about —
+*something went wrong at t=600; what happened next* — needs three numbers nothing computes:
+
+| number | what it answers |
+|---|---|
+| time-to-recover | how long until the metric returns to its pre-event band |
+| cost-during-recovery | what the recovery was paid for in regret and in flapping |
+| recovered-to | the new operating point — the same one, or a permanently worse one |
+
+All three need the perturbation instant, which means `MetricInput` has to carry the
+scenario's event timeline. It is plain data and it fits the existing contract; it simply was
+never passed. Until it is, a model that never recovers and a model that recovers in nine
+seconds score within noise of each other, and the harness cannot tell you which one you are
+about to deploy.
+
+**A model that is excellent in the ordinary case and useless in the bad one must not be
+deployable on this benchmark's say-so.** That means the two are reported apart, never
+averaged: a steady-state score and a survival score, side by side, with no aggregate over
+them. An aggregate is exactly the number a reader would quote.
+
+---
+
+## Phase 7 — the cockpit
+
+The interface, and the reason the rest of the plan is shaped the way it is.
+
+### Who is at the controls
+
+Two audiences, and neither speaks the other's language. A **networking expert** who does
+not know what a pinball loss is or why anyone would want an interval. An **ML expert** who
+does not know what a path segment is, what re-signing does to an identifier, or why forward
+and reverse availability differ. Both are experimenting rather than reading a result, which
+means both will change something and run it again, and both will be wrong about what the
+other's terms mean if we let them guess.
+
+The rule that follows: **every term the interface shows carries its own one-line gloss, in
+the other audience's vocabulary, and the gloss travels with the thing rather than living in
+a glossary page.** `Metric.doc` already exists and is already a single line; an axis already
+carries a `doc` and per-value `note`. The interface renders those. It does not keep its own
+copy of them, because a copy drifts and a drifted gloss is worse than none.
+
+Simplify the *navigation*, never the number. A reader who wants four significant figures and
+a support count gets them; a reader who wants "is this good" gets a direction and a floor to
+compare against — and the floor is the five mandatory baselines, which is why they are not
+optional.
+
+### The cockpit, said properly
+
+A model flies the aircraft. Its controls are the tool registry and the advisory channel; its
+instruments are whatever it chose to keep from a log the harness never summarised for it.
+The flight has a destination, and the ordinary question is the boring one: **how fast, how
+cheaply, how smoothly does it get there.**
+
+Then the flight goes wrong, on purpose:
+
+- **turbulence** — load variance, diurnal swing, contention for the few good paths
+- **engine failure** — a scheduled link or AS outage, and the recovery after it
+- **hijack** — defectors going greedy, an adversarial population, a budget squeeze that
+  starves the model of information exactly when it needs most
+- **weather nobody forecast** — a regime shift mid-episode, a cold start where most paths
+  were never observed
+
+So there are two questions, and they are answered separately (Phase 6½):
+
+1. **Ordinary flight.** Fast, smart, efficient. Decision latency and its tail, regret
+   against the bound, cost per decision, and whether it stays put when it should.
+2. **The bad day.** Does it recover, how long does it take, what did the recovery cost, and
+   does it come back to where it was.
+
+### The lens
+
+The vision calls it a Jacobian lens, and the sharp version of that is: **what did the
+model's output do when its input moved.** Per decision round, on one timeline:
+
+- what the model was *shown* — the observation delta since its last turn
+- what it *did* — the advisory delta
+- what the world *did back* — the realised load delta, one round later
+
+Three deltas, aligned. That is the view that tells a researcher **why** a model oscillates
+rather than that it does — whether it is chasing noise, chasing its own wake, or reacting
+correctly to something that really moved. It requires no new instrumentation: the full
+unsummarised event log already exists because invariant 1 requires it. What it requires is a
+*channel*.
+
+**Two invariants constrain that channel hard, and this is the part to get right.**
+
+- **Invariant 3 — the network does not wait for the model.** It must not wait for a browser
+  either. The live channel drops on backpressure: the interface misses frames rather than
+  the world slowing down to be watched. A dropped frame is **marked as dropped and never
+  interpolated**, because a smooth line drawn through a gap is a lie about a system whose
+  whole subject is instability.
+- **Invariant 1 — the harness never summarises for the model.** Nothing the interface
+  computes may reach the model. The lens is strictly downstream of the turn and the model's
+  session has no handle on it. If watching a run could change it, every live result would be
+  unreproducible from its seed, and invariant 4 would go with it.
+
+Cells run in a process pool (ADR 0014, and deliberately), so the channel is a queue out of
+worker processes rather than a shared object. That is a real piece of work and it is the
+only genuinely new mechanism this phase needs.
+
+### Not a log dump
+
+Every panel has an owner: a registered metric, a detector, or a recorded event. Nothing
+renders "the log". If a fact is worth showing it has a name, a unit, a direction — the
+registry already carries `higher_is_better`, including the `None` that means *closer to zero
+is better* — and a support count, which Phase 4 added for exactly this reason. A number with
+no support behind it renders as thin here the same way it does on the PDF, and for the same
+reason.
+
+The one exception, deliberately kept: **a raw log view, one click away, never the default.**
+A researcher chasing something we did not anticipate needs it, and hiding it would be
+dishonest about what the harness holds.
+
+### The interface never lists a test by hand
+
+The hard requirement, and the one to design against rather than retrofit: **add a metric in
+code and the interface shows it with no interface change; delete it and it disappears.**
+
+Four registries already exist and this is the phase that makes them load-bearing:
+
+| what | where | added by |
+|---|---|---|
+| metrics | `REGISTRY` + the `@metric` decorator | ADR 0017 |
+| axes | `AXES` | ADR 0016 |
+| probes | the probe registry | M5 |
+| baselines | `MANDATORY_BASELINES` | Phase 2 |
+
+The interface reads those four and renders whatever it finds. Three consequences, all of
+which have to be accepted rather than worked around:
+
+1. **A new metric must arrive fully described** — name, family, direction, a one-line doc,
+   and the support count of its family — because there is nothing else to render it from.
+   That is a burden on whoever adds the metric, and it is the correct place for it.
+2. **No per-metric layout code anywhere.** A metric declares its *shape* — scalar, mapping
+   over strata, series over time — and there is one renderer per shape. A metric that needs
+   its own special case in the interface is a metric that has not declared its shape
+   properly.
+3. **Selecting a subset is a filter over the registry, never a hardcoded list.** Tests are
+   not mandatory: a researcher improving calibration should be able to run the accuracy
+   family alone and skip an hour of stability sweeps. But — and this is the clause that
+   matters — **a partial run must say what it did not run.** A narrowed suite that renders
+   like a full one is exactly the dishonesty Phase 4 exists to prevent, moved into the
+   interface where it is easier to commit and harder to see.
+
+### Architecture, then variant
+
+The goal is two-level and the sweep engine cannot currently express it. A cell is
+`(model, axes, repeat)`. "Architecture" is a grouping over models that nothing records, so
+today the question *does a graph network beat a tool-using LLM here* is answerable only by
+someone who happens to know which submitted name is which.
+
+The change is small and it has to land in Phase 5, before submissions exist:
+
+- a model declares an **architecture tag** beside its capabilities, recorded per cell the
+  way capabilities have been since Phase 4;
+- `bench` groups by tag when summarising, and the report gains an architecture-level
+  comparison **above** the model-level one;
+- and the caveat prints with it, every time: with a handful of variants per architecture,
+  this compares **the best variants anyone submitted**, not the architectures. The number of
+  variants behind each tag is printed beside it, and with few variants it renders thin —
+  the same rule as everywhere else, applied to the comparison the whole product is for.
+
+### What it is built on
+
+`src/scionarena/ui.py` already serves one page from the standard library, runs a job on a
+worker thread, reports progress per decision round, and can stop a run. No framework, no
+build step, nothing installed on the demonstration machine. That skeleton stays. It grows
+four things:
+
+1. **the live channel** out of the sweep's worker processes — drop-on-backpressure, marked
+   gaps, read-only
+2. **registry-driven panels** — one renderer per declared shape, zero per-metric code
+3. **the configurator** — pick models, pick axes, pick metrics or a family, and see the cell
+   count *and the time estimate* before pressing run rather than after
+4. **the lens**
+
+### Why it is last
+
+A cockpit with no aircraft in it is a mockup. The thing that makes this interface worth
+building — watching a tool-using LLM and a graph network handle the same hijack, side by
+side, and seeing *where* one of them loses it — does not exist until Phase 5's adapters do.
+Phase 6's probes can land in parallel; Phase 6½ must land first, because staging the bad day
+is the prerequisite for watching anyone fly through it.
 
 ---
 
@@ -529,3 +774,10 @@ critical path to anything a user asked for.
 Phase 2's first suite. It is the thing the mentor's own milestone is specified in terms of,
 we are the only rig that can run it, and neither document currently says so. Saying so is
 worth doing explicitly, in both directions.
+
+**M8 absorbs the cockpit, and grows.** `HANDOFF.md` has M8 as the agent harness. Phase 7's
+interface is not a separate milestone: the live lens, the memory view and the context-rot
+curve are the same instrument pointed at the same event log, and M8's own question — what
+does a model choose to keep when nobody summarises for it — is one of the panels. What does
+change is that M8 stops being about agents specifically. It is about **watching any model
+fly**, and an LLM is one of four things in the cockpit.
