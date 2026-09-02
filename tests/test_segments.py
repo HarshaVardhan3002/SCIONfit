@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from scionarena.core.segments import (
+    EXPIRY_QUANTUM_S,
     SEG_CORE,
     SEG_UP,
     BeaconPolicy,
@@ -445,6 +446,57 @@ def test_filtering_survives_rebeaconing(store: SegmentStore):
     store.filter_segments([store._up_by_as[3][0]])
     store.rebeacon()
     assert store.filtered == frozenset({store._up_by_as[3][0]})
+
+
+def test_the_beacon_cadence_is_upstreams_and_churns_identity_at_that_rate(store: SegmentStore):
+    """B1. ``interval_s`` defaulted to 300 s; upstream originates, propagates
+    and registers every **5 s**. Sixty times too slow, in the one constant the
+    identity experiment is clocked by.
+
+    Asserted as the churn it produces rather than as the constant, because the
+    constant is only interesting through its consequence: under ``crypto_bound``
+    an identifier that changes 720 times an hour leaves a model essentially no
+    window in which to accumulate per-path state, where one changing 12 times an
+    hour leaves plenty. Every result recorded at 300 s understates the effect by
+    more than an order of magnitude.
+    """
+    assert BeaconPolicy().interval_s == 5.0
+    per_hour = 3600.0 / BeaconPolicy().interval_s
+    assert per_hour == 720.0
+
+    before = {seg_id: seg.segment_id for seg_id, seg in store.iter_segments()}
+    structural_before = {seg_id: seg.structural_id for seg_id, seg in store.iter_segments()}
+    # Stepped, not jumped: ``advance_to`` re-signs everything due in one pass,
+    # so a single 3,600 s jump is one round however many were owed.
+    for second in range(1, 3601):
+        store.advance_to(float(second))
+
+    generations = [seg.generation for _, seg in store.iter_segments()]
+    assert min(generations) >= per_hour * 0.5, (
+        f"the slowest segment re-signed {min(generations)} times in an hour, "
+        f"and a 5 s interval with 25% jitter cannot be that slow"
+    )
+    assert all(seg.segment_id != before[i] for i, seg in store.iter_segments()), (
+        "material did not change"
+    )
+    assert all(seg.structural_id == structural_before[i] for i, seg in store.iter_segments()), (
+        "re-signing moved a structural id, which is the one thing it may never do"
+    )
+
+
+def test_expiry_lands_on_the_hop_field_quantum(store: SegmentStore):
+    """A real deployment reads hop-field expiry as one of 256 discrete steps of
+    337.5 s, not as a float. A model scheduling re-resolution against a
+    continuous expiry is reasoning about precision the protocol does not carry.
+    """
+    store.advance_to(1000.0)
+
+    expiries = [seg.expiry_s for _, seg in store.iter_segments()]
+    assert all(e % EXPIRY_QUANTUM_S == pytest.approx(0.0, abs=1e-6) for e in expiries)
+    assert BeaconPolicy().lifetime_s == 64 * EXPIRY_QUANTUM_S, "6 h is 64 quanta"
+
+    loose = BeaconPolicy(quantise_expiry=False)
+    assert loose.expiry_for(10.0) == 10.0 + loose.lifetime_s, "the quantum stays switchable"
 
 
 def test_every_resigning_reaches_the_feed_not_just_the_last_round(store: SegmentStore):

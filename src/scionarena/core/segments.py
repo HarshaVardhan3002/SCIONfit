@@ -34,6 +34,7 @@ them.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
@@ -52,6 +53,7 @@ __all__ = [
     "SegmentStore",
     "BeaconPolicy",
     "FilterPolicy",
+    "EXPIRY_QUANTUM_S",
     "IdentityPolicy",
     "SEG_UP",
     "SEG_CORE",
@@ -64,6 +66,13 @@ SEG_UP: Final = 0
 SEG_CORE: Final = 1
 SEG_DOWN: Final = 2
 SEG_NAMES: Final = ("up", "core", "down")
+
+#: Resolution of hop-field expiry, in seconds. SCION encodes expiry in 8 bits
+#: over a segment's 6-hour maximum lifetime, so 21_600 / 64 = 337.5 s per step
+#: and 256 steps in all. Positions inside one quantum are indistinguishable to
+#: anything reading the path, which is why a selector scheduling re-resolution
+#: has to leave itself at least a whole quantum.
+EXPIRY_QUANTUM_S: Final = 337.5
 
 #: ``path_id`` aliases the structural identifier, or the crypto-bound one.
 IdentityPolicy = str  # "structural" | "crypto_bound"
@@ -114,18 +123,32 @@ def _filter_draw(salt: int, structural_id: int) -> float:
 class BeaconPolicy:
     """How often segments are re-beaconed and how long they live.
 
-    ``ASSUMPTION(Q1)``: these intervals are plausible rather than measured. The
-    substrate's job is that *something* refreshes on a schedule, so a model can
-    be tested against refresh; the exact period is a scenario parameter.
+    Both defaults are upstream's, not ours. Origination, propagation and
+    registration all default to **5 seconds** in ``scionproto/scion``, and
+    ``DefaultMaxExpTime = 63`` gives 64 x 337.5 s = exactly 6 hours of lifetime.
+
+    ``interval_s`` was 300 s until the numbers were checked -- sixty times too
+    slow, in the constant the identity experiment is clocked by. At 300 s an
+    identifier under ``crypto_bound`` changed about twelve times an hour and a
+    model had real time to accumulate per-path state between refreshes; at 5 s
+    it changes seven hundred and twenty times an hour and the
+    re-beaconing-to-lifetime ratio is roughly 4,300:1 rather than 72:1. Every
+    result recorded at the old cadence understates identity churn by more than
+    an order of magnitude. 300 s remains available as a scenario override so
+    those runs stay reproducible.
     """
 
     #: seconds between re-beaconing rounds
-    interval_s: float = 300.0
+    interval_s: float = 5.0
     #: how long a freshly signed segment remains valid
-    lifetime_s: float = 21_600.0  # 6 h, the usual SCION segment maximum
+    lifetime_s: float = 21_600.0  # 6 h: 64 x EXPIRY_QUANTUM_S at DefaultMaxExpTime
     #: fraction of ``interval_s`` by which a segment's refresh is spread out, so
     #: the whole world does not re-sign on the same tick
     jitter: float = 0.25
+    #: whether ``expiry_s`` is rounded down to a whole :data:`EXPIRY_QUANTUM_S`.
+    #: A real deployment reads hop-field expiry as one of 256 discrete values,
+    #: so a model reasoning about time-to-expiry sees a staircase, not a float.
+    quantise_expiry: bool = True
 
     def __post_init__(self) -> None:
         if self.interval_s <= 0:
@@ -134,6 +157,20 @@ class BeaconPolicy:
             raise ValueError("a segment must outlive the interval that refreshes it")
         if not 0.0 <= self.jitter < 1.0:
             raise ValueError("jitter is a fraction of the interval, in [0, 1)")
+
+    def expiry_for(self, created_s: float) -> float:
+        """When a segment signed at ``created_s`` expires.
+
+        Quantised because SCION encodes hop-field expiry in 8 bits over the
+        segment's maximum lifetime, so the value is one of 256 steps of
+        :data:`EXPIRY_QUANTUM_S` rather than a continuous number. A model that
+        schedules re-resolution against a float expiry is reasoning about a
+        precision the protocol does not carry.
+        """
+        expiry = created_s + self.lifetime_s
+        if not self.quantise_expiry:
+            return expiry
+        return math.floor(expiry / EXPIRY_QUANTUM_S) * EXPIRY_QUANTUM_S
 
 
 @dataclass(frozen=True)
@@ -393,7 +430,7 @@ class SegmentStore:
                 generation=0,
                 signature_id=self._new_signature(),
                 created_s=created_s,
-                expiry_s=created_s + self.policy.lifetime_s,
+                expiry_s=self.policy.expiry_for(created_s),
             )
         )
         due = self._jittered_due(created_s)
@@ -754,27 +791,46 @@ class SegmentStore:
         #: them -- and a reader stepping the world a second at a time saw one
         #: tick's worth of a feed it believed was complete. At the corrected 5 s
         #: beacon interval there are sixty times as many rounds to lose.
-        self._resigned.extend(int(i) for i in seg_ids)
-        for seg_id in seg_ids:
-            seg = self._segments[seg_id]
-            self._segments[seg_id] = replace(
-                seg,
+        ids = np.asarray(seg_ids, dtype=np.intp)
+        if ids.size == 0:
+            return
+        self._resigned.extend(int(i) for i in ids)
+
+        # Both draws are taken for the whole round in one call. Per segment they
+        # were two scalar numpy calls each, which is affordable at a 300 s beacon
+        # interval and is not at the true 5 s one: a realistic-tier step re-signs
+        # several thousand segments, and the RNG rather than the work became the
+        # substrate's dominant per-step cost. Batching does not change what is
+        # drawn per round, so the stream stays reproducible from the seed.
+        signatures = self._rng.integers(0, 2**63 - 1, size=ids.size)
+        spread = self.policy.jitter * self.policy.interval_s
+        due = t + self.policy.interval_s + self._rng.uniform(-spread, spread, size=ids.size)
+        expiry = self.policy.expiry_for(t)
+
+        if self._due_arr is None:
+            self._due_arr = np.array(self._due, dtype=np.float64)
+        signature_list = signatures.tolist()
+        due_list = due.tolist()
+        segments = self._segments
+        for k, seg_id in enumerate(ids.tolist()):
+            seg = segments[seg_id]
+            # Constructed rather than ``dataclasses.replace``d. ``replace`` reads
+            # every field back reflectively, which at this cadence was two thirds
+            # of the substrate's whole step cost; the fields are right here.
+            segments[seg_id] = Segment(
+                seg_type=seg.seg_type,
+                ifaces=seg.ifaces,
+                ases=seg.ases,
+                structural_id=seg.structural_id,
                 generation=seg.generation + 1,
-                signature_id=self._new_signature(),
+                signature_id=signature_list[k],
                 created_s=t,
-                expiry_s=t + self.policy.lifetime_s,
+                expiry_s=expiry,
             )
-            when = self._jittered_due(t)
-            self._due[seg_id] = when
-            if self._due_arr is not None:
-                self._due_arr[seg_id] = when
-        if len(seg_ids):
-            self._next_due = (
-                float(self._due_arr.min())
-                if self._due_arr is not None
-                else (min(self._due) if self._due else float("inf"))
-            )
-            self._invalidate()
+            self._due[seg_id] = due_list[k]
+        self._due_arr[ids] = due
+        self._next_due = float(self._due_arr.min())
+        self._invalidate()
 
     def expired(self, t: float | None = None) -> list[int]:
         when = self.t if t is None else t
