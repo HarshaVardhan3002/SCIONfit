@@ -481,6 +481,54 @@ What is missing, and lands with this phase:
   comparison in Phase 7 needs, and adding it after there are results makes those results
   ungroupable. See Phase 7, "architecture, then variant".
 
+### The comparison is confounded, and the fix is one parameter
+
+`ToolUsingModel` inherits `PathModel`, so an agentic model implements the four fixed-cycle
+methods as well as `act`. That inheritance was deliberate and it is what makes one harness
+able to hold both kinds of model at all. But `run_episode` currently branches on the
+model's own declaration and there is no way to override it:
+
+```python
+if getattr(model.capabilities, "uses_tools", False) and hasattr(model, "act"):
+    model.act(session, deadline_s)          # the model picks its own probes
+else:
+    drive_episode(...)                      # the harness picks them, from loop.py
+```
+
+Both paths are charged through the same `Session` and the same `Budget`, so neither gets
+data free. The asymmetry is not cost, it is **authorship of the probing policy**. The fixed
+cycle runs the policy hardcoded in `loop.py` — query the scope, probe `probes_per_turn`
+paths, round robin. So every result today compares
+
+> (a forecaster **plus our probing policy**) against (an agent **plus its own probing policy**)
+
+and the agent is being scored on two competences where the forecaster is scored on one.
+That would not matter if probe selection were a detail. It is close to the whole point of
+an agentic model, which makes it the confound that lands squarely on the headline number:
+if the LLM wins we cannot say whether it forecasts better or merely probes better, and
+those two findings have completely different consequences for deployment.
+
+The fix costs one parameter, because the protocol inheritance already did the hard part:
+
+- `run_episode` takes **`mode: "auto" | "driven" | "agentic"`**, defaulting to `auto`, which
+  is the declaration-based branch it does today. `driven` forces a tool-using model through
+  `drive_episode`; `agentic` on a model that cannot `act` is a refusal, not a fallback.
+- The mode is **recorded on every cell**, beside the tier and the capabilities. A cell that
+  does not say which way it ran is a cell whose operational numbers cannot be interpreted.
+- `bench` gains a **parity pair**: the same model, same seed, same axes, run both ways.
+
+That pair is worth more than either cell alone. The `driven` cells compare architectures on
+forecasting and decision quality with information acquisition **held equal** — which is the
+comparison the accuracy family was designed for and has never actually run. The difference
+between the pair isolates *the value of choosing your own probes*, per architecture and per
+scenario, and that number does not exist anywhere yet.
+
+Two things to be honest about in the report when it prints. A model forced into `driven`
+mode is not being shown at its best and the page must say so rather than let a reader take
+it as the model's score. And the harness's own probe policy is now a variable in every
+`driven` result: it is dumb on purpose, it is identical for every model, and it is
+therefore fair without being good. It gets named in the limits section next to the tier.
+
 ---
 
 ## Phase 6 — probes the review made possible
