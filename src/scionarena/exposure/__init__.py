@@ -24,11 +24,25 @@ from .contracts import (
     ToolUsingModel,
     TopologySnapshot,
 )
+from .loading import (
+    BUILTIN_MODELS,
+    CapabilityLine,
+    CapabilityReport,
+    ModelLoadError,
+    capability_report,
+    load_model,
+)
 from .session import LogRecord, Session, ToolResult, drive_episode, run_episode
 from .streams import STREAMS, EventLog, RawEvent, Subscription
 from .tools import TOOLS, PathInfo, ToolError, ToolSpec, tool_definitions
 
 __all__ = [
+    "load_model",
+    "capability_report",
+    "ModelLoadError",
+    "CapabilityReport",
+    "CapabilityLine",
+    "BUILTIN_MODELS",
     "SLA",
     "STREAMS",
     "TOOLS",
