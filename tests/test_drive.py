@@ -247,3 +247,141 @@ def test_the_architecture_tag_is_not_validated_against_a_list() -> None:
     assert Capabilities(name="x", architecture="something-nobody-has-tried").architecture
 
     assert Persistence().capabilities.architecture == "persistence"
+
+
+# --------------------------------------------------------------------------
+# what the report makes of it
+
+
+def _drive_cell(label: str, drive: str, arch: str, regret: float, **kw: Any) -> Any:
+    from scionarena.bench.results import CellResult
+
+    axes = {
+        "population": "1k",
+        "defectors": "none",
+        "discipline": "none",
+        "paths": "all",
+        "staleness": "fresh",
+        "probes": "audited",
+    }
+    base: dict[str, Any] = dict(
+        cell_id=f"{label}-{drive}-{kw.get('repeat', 0)}",
+        suite="t",
+        suite_digest="dddd",
+        model=f"pkg:{label}",
+        label=label,
+        mandatory=False,
+        axes=axes,
+        repeat=kw.get("repeat", 0),
+        seed=1,
+        scenario="t/x",
+        tier="smoke",
+        drive=drive,
+        capabilities={"architecture": arch, "name": label},
+        metrics={"regret_ratio": regret, "n_cost_samples": 80.0},
+    )
+    base.update({k: v for k, v in kw.items() if k != "repeat"})
+    return CellResult(**base)
+
+
+def test_the_two_halves_of_a_pair_are_two_rows_not_one_averaged_row() -> None:
+    """Names the bug: the report keys everything on the model's label, so both
+    halves of a parity pair would have landed in one bucket and been reduced to
+    a median -- silently averaging the two things the pair exists to keep
+    apart, and reporting the mean of a model against itself as a score."""
+    from scionarena.bench.report import gather
+
+    data = gather(
+        [
+            _drive_cell("P", "fixed", "stochastic", 1.0),
+            _drive_cell("P", "agentic", "stochastic", 3.0),
+        ]
+    )
+    names = [m for m, _ in data.models]
+    assert names == ["P [agentic]", "P [fixed]"]
+    assert data.paired == ["P"]
+    assert data.at_baseline[("P [fixed]", "regret_ratio")].value == 1.0
+    assert data.at_baseline[("P [agentic]", "regret_ratio")].value == 3.0
+
+
+def test_an_unpaired_model_keeps_its_plain_name() -> None:
+    """Otherwise every ordinary suite grows a suffix that distinguishes nothing,
+    on every row, forever."""
+    from scionarena.bench.report import gather
+
+    data = gather([_drive_cell("P", "fixed", "stochastic", 1.0)])
+    assert [m for m, _ in data.models] == ["P"]
+    assert data.paired == []
+
+
+def test_a_parity_pair_is_one_variant_not_two() -> None:
+    """Names the bug the first rendered page showed: the architecture table
+    counted display rows, so one model run both ways read as two variants --
+    and carried its tag over the threshold that decides whether the row is
+    marked thin. A tag that escapes the thin mark on a duplicate is worse than
+    one that never had a threshold."""
+    from scionarena.bench.report import THIN_VARIANTS, _architectures, _styles, gather
+
+    data = gather(
+        [
+            _drive_cell("P", "fixed", "stochastic", 1.0),
+            _drive_cell("P", "agentic", "stochastic", 3.0),
+            _drive_cell("Q", "fixed", "stochastic", 2.0),
+        ]
+    )
+    story: list[Any] = []
+    _architectures(story, _styles(), data)
+    text = _text_of(story)
+    assert "stochastic" in text
+    # Two distinct models, three rows.
+    assert len([m for m, _ in data.models]) == 3
+    assert "\n2\n" in "\n" + text + "\n", text
+    assert THIN_VARIANTS == 3
+    assert "stochastic\u2020" in text, "two variants must still be marked thin"
+
+
+def test_the_report_says_a_forced_fixed_model_is_not_at_its_best() -> None:
+    """A number printed without that sentence invites a reader to take it as the
+    model's score, when the harness chose what it was allowed to look at."""
+    from scionarena.bench.report import _limits, _styles, gather
+
+    data = gather([_drive_cell("P", "fixed", "stochastic", 1.0)])
+    story: list[Any] = []
+    _limits(story, _styles(), data)
+    text = _text_of(story)
+    assert "not being shown at its best" in text
+    assert "round robin" in text, "the harness's own probe policy has to be named"
+
+
+def test_refused_cells_are_not_rendered_as_failures() -> None:
+    """Names the failure mode: a parity sweep includes five mandatory baselines
+    that cannot act, and five red rows in the failures table tell a reader the
+    floor every other number is measured against is broken."""
+    from scionarena.bench.report import _failures, _styles, gather
+    from scionarena.bench.results import REFUSED
+
+    data = gather(
+        [
+            _drive_cell("P", "fixed", "stochastic", 1.0),
+            _drive_cell("E", "", "ewma", 0.0, error=f"{REFUSED} no act()", metrics={}),
+        ]
+    )
+    assert data.refused == {"E": 1}
+    assert data.failures == []
+    story: list[Any] = []
+    _failures(story, _styles(), data)
+    text = _text_of(story)
+    assert "did not apply" in text
+    assert "Cells that failed" not in text
+
+
+def _text_of(story: list[Any]) -> str:
+    out = []
+    for item in story:
+        getter = getattr(item, "getPlainText", None)
+        if getter is not None:
+            out.append(str(getter()))
+        cells = getattr(item, "_cellvalues", None)
+        if cells is not None:
+            out.extend(str(cell) for row in cells for cell in row)
+    return "\n".join(out)

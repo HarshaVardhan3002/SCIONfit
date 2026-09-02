@@ -81,6 +81,12 @@ HEADLINE: Mapping[str, str] = {
 #: adds more.
 AXIS_METRICS: tuple[str, ...] = ("swing", "regret_ratio")
 
+#: Variants an architecture needs before its row stops being a claim about the
+#: best variant anybody happened to submit. Three, for the same reason repeats
+#: are three: below it the spread is not estimable, and an architecture is a
+#: population of models exactly as a cell is a population of seeds.
+THIN_VARIANTS = 3
+
 THIN_MARK = "†"
 
 
@@ -171,6 +177,19 @@ class ReportData:
     #: ``(label, mandatory)``, user models first.
     models: list[tuple[str, bool]] = field(default_factory=list)
     capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: display name -> architecture tag, empty where the model did not declare
+    #: one. Printed as "unrecorded"; never guessed from the class name.
+    architecture: dict[str, str] = field(default_factory=dict)
+    #: display name -> the drive that produced it (ADR 0019).
+    drive_of: dict[str, str] = field(default_factory=dict)
+    #: display name -> the model's own label, which the two halves of a parity
+    #: pair share. One model run twice is one variant, and counting the rows
+    #: instead would let a tag reach the variant threshold on a duplicate.
+    bare_of: dict[str, str] = field(default_factory=dict)
+    #: Models present under more than one drive, by their bare label. These are
+    #: the parity pairs, and the only rows whose difference isolates what
+    #: choosing your own probes is worth.
+    paired: list[str] = field(default_factory=list)
     #: axis name -> labels that actually appear in the results.
     axes_seen: dict[str, list[str]] = field(default_factory=dict)
     baseline: dict[str, str] = field(default_factory=dict)
@@ -181,6 +200,12 @@ class ReportData:
     #: axis -> metric -> model -> readings, one per axis label.
     by_axis: dict[str, dict[str, dict[str, list[Reading]]]] = field(default_factory=dict)
     failures: list[tuple[str, str, str]] = field(default_factory=list)
+    #: Model labels whose cells were *not applicable* rather than broken -- a
+    #: forecaster asked for its agentic half. Held apart from ``failures``
+    #: because a page that renders the two alike tells a reader that five
+    #: mandatory baselines are faulty, which would discredit the floor every
+    #: other number is measured against.
+    refused: dict[str, int] = field(default_factory=dict)
     substrate_digests: list[str] = field(default_factory=list)
     seeds: dict[str, int] = field(default_factory=dict)
     #: True when no cell moved more than one axis off the baseline, so no
@@ -275,14 +300,37 @@ def gather(results: Sequence[CellResult]) -> ReportData:
     data.axes_seen = {a: [v for v in AXES[a].labels if v in labels] for a, labels in seen.items()}
     data.baseline = {a: AXES[a].values[0].label for a in data.axes_seen}
 
+    # One model run two ways is two things to compare, not one thing measured
+    # twice, so the drive joins the name -- but only where both halves are
+    # present, or every ordinary suite would grow a suffix that says nothing.
+    # Refused cells carry no drive and must not count as a second one.
+    drives: dict[str, set[str]] = {}
+    for cell in cells:
+        if cell.drive:
+            drives.setdefault(cell.label, set()).add(cell.drive)
+    data.paired = sorted(label for label, seen in drives.items() if len(seen) > 1)
+    paired = set(data.paired)
+
+    def name_of(cell: CellResult) -> str:
+        if cell.label in paired and cell.drive:
+            return f"{cell.label} [{cell.drive}]"
+        return cell.label
+
     order: dict[str, bool] = {}
     for cell in cells:
-        order.setdefault(cell.label, cell.mandatory)
+        name = name_of(cell)
+        order.setdefault(name, cell.mandatory)
         if cell.capabilities:
-            data.capabilities.setdefault(cell.label, dict(cell.capabilities))
-        data.seeds.setdefault(f"{cell.label} @ {_where(cell.axes)} #{cell.repeat}", cell.seed)
-        if not cell.ok:
-            data.failures.append((cell.label, _where(cell.axes), cell.error or "?"))
+            data.capabilities.setdefault(name, dict(cell.capabilities))
+            data.architecture.setdefault(name, str(cell.capabilities.get("architecture", "")))
+        if cell.drive:
+            data.drive_of.setdefault(name, cell.drive)
+        data.bare_of.setdefault(name, cell.label)
+        data.seeds.setdefault(f"{name} @ {_where(cell.axes)} #{cell.repeat}", cell.seed)
+        if cell.refused:
+            data.refused[name] = data.refused.get(name, 0) + 1
+        elif not cell.ok:
+            data.failures.append((name, _where(cell.axes), cell.error or "?"))
     data.models = sorted(order.items(), key=lambda kv: (kv[1], kv[0]))
 
     present: set[str] = set()
@@ -302,7 +350,7 @@ def gather(results: Sequence[CellResult]) -> ReportData:
     base_cells: dict[str, list[CellResult]] = {}
     for cell in cells:
         if _where(cell.axes) == "baseline":
-            base_cells.setdefault(cell.label, []).append(cell)
+            base_cells.setdefault(name_of(cell), []).append(cell)
     for label, _ in data.models:
         for metric in present:
             data.at_baseline[(label, metric)] = _reading(metric, base_cells.get(label, []))
@@ -317,7 +365,7 @@ def gather(results: Sequence[CellResult]) -> ReportData:
                     subset = [
                         c
                         for c in cells
-                        if c.label == label
+                        if name_of(c) == label
                         and c.axes.get(axis) == value
                         and all(
                             c.axes.get(a) == AXES[a].values[0].label
@@ -620,6 +668,84 @@ def _declarations(story: list[Any], sheet: Any, data: ReportData) -> None:
     )
 
 
+def _architectures(story: list[Any], sheet: Any, data: ReportData) -> None:
+    """Architecture before variant, which is the order the question is asked in.
+
+    Deliberately above the model tables and deliberately hedged: with a handful
+    of variants per tag this compares the best variants anybody submitted, not
+    the architectures. The variant count prints beside every row so a reader can
+    see which rows are a comparison and which are one model with a label.
+    """
+    if not data.architecture:
+        return
+    story.append(_paragraph("Architectures", sheet["H2"]))
+
+    groups: dict[str, list[str]] = {}
+    for name, _ in data.models:
+        groups.setdefault(data.architecture.get(name) or "unrecorded", []).append(name)
+
+    metrics = [m for m in HEADLINE.values() if any(k[1] == m for k in data.at_baseline)]
+    header = ["architecture", "variants"] + [_shorten(m, 16) for m in metrics] + ["best variant"]
+    rows = [header]
+    for tag in sorted(groups, key=lambda t: (t == "unrecorded", t)):
+        names = groups[tag]
+        # Distinct models, not distinct rows: a parity pair is one variant run
+        # two ways, and letting it count twice would carry a tag over the
+        # threshold on the strength of a duplicate.
+        variants = len({data.bare_of.get(n, n) for n in names})
+        cells = [f"{tag}{THIN_MARK if variants < THIN_VARIANTS else ''}", str(variants)]
+        best_names = []
+        for metric in metrics:
+            entry = REGISTRY.get(metric.partition(".")[0])
+            higher = bool(entry.higher_is_better) if entry is not None else False
+            scored = [
+                (data.at_baseline[(n, metric)], n)
+                for n in names
+                if (n, metric) in data.at_baseline and data.at_baseline[(n, metric)].measured
+            ]
+            if not scored:
+                cells.append("not measured")
+                continue
+            pick = (
+                max(scored, key=lambda p: p[0].value or 0.0)
+                if higher
+                else min(scored, key=lambda p: p[0].value or 0.0)
+            )
+            cells.append(pick[0].render())
+            best_names.append(pick[1])
+        # Which variant won. Collapsed to bare labels first: one model winning
+        # under both drives is one winner, and printing the pair here would say
+        # the architecture has two champions when it has one run two ways.
+        # Several bare labels means the tag's row is several models, and naming
+        # only the first would read as the architecture's champion.
+        winners = sorted({data.bare_of.get(n, n) for n in best_names})
+        cells.append(_shorten(" / ".join(winners), 40) if winners else "-")
+        rows.append(cells)
+
+    story.append(_table(rows))
+    story.append(
+        _paragraph(
+            "Each cell is the <b>best variant</b> under that tag, not the tag's average -- an "
+            "architecture is judged by what it can do, and averaging a good variant with a bad "
+            "one measures the submission, not the architecture. A tag marked "
+            f"{THIN_MARK} has fewer than {THIN_VARIANTS} variants behind it, which makes its "
+            "row a statement about one or two models that happen to share a label.",
+            sheet["Body"],
+        )
+    )
+    if data.paired:
+        story.append(
+            _paragraph(
+                "<b>"
+                + _escape(", ".join(data.paired))
+                + "</b> appears twice, once per drive. Those two rows share a world and differ "
+                "only in who chose the probes, so their difference is what choosing your own "
+                "probes was worth here -- and nothing else in this report measures that.",
+                sheet["Body"],
+            )
+        )
+
+
 def _family_section(
     story: list[Any], sheet: Any, data: ReportData, family: str, width: float
 ) -> None:
@@ -810,6 +936,19 @@ def _conformance(story: list[Any], sheet: Any, card: Mapping[str, Any] | None) -
 
 
 def _failures(story: list[Any], sheet: Any, data: ReportData) -> None:
+    if data.refused:
+        story.append(_paragraph("Cells that did not apply", sheet["H2"]))
+        listed = ", ".join(f"{label} ({n})" for label, n in sorted(data.refused.items()))
+        story.append(
+            _paragraph(
+                f"{_escape(listed)} &mdash; asked for a drive the model has no code path for, "
+                "which for a forecaster asked to be agentic is a description rather than a "
+                "fault. These cells cost nothing: the refusal is resolved before a world is "
+                "built. They are listed apart from failures because rendering them alike "
+                "would say the floor is broken.",
+                sheet["Body"],
+            )
+        )
     if not data.failures:
         return
     story.append(_paragraph("Cells that failed", sheet["H2"]))
@@ -854,6 +993,23 @@ def _limits(story: list[Any], sheet: Any, data: ReportData) -> None:
         "This evaluates trained models; it does not train them, and a model's own learning "
         "dynamics are outside what any cell recorded.",
     ]
+    drives = {d for d in data.drive_of.values() if d}
+    if "fixed" in drives:
+        points.append(
+            "<b>A model shown under <i>fixed</i> is not being shown at its best.</b> The "
+            "probing policy in that mode is the harness's -- query the scope, probe two paths, "
+            "round robin -- and it is dumb on purpose so that every model faces the same one. "
+            "That makes it fair without making it good, and a tool-using model measured under "
+            "it is being told what to look at rather than deciding."
+        )
+    if data.paired:
+        points.append(
+            "<b>The parity pair holds the world constant, not the effort.</b> Both halves run "
+            "the same seed and the same scenario, so their difference is the probing policy "
+            "and the time it costs -- but the agentic half also spends its slot differently, "
+            "and an operational number is not comparable across the pair the way an accuracy "
+            "number is."
+        )
     if data.one_at_a_time:
         points.append(
             "<b>No interaction between axes was measured.</b> Every reading holds the other "
@@ -911,6 +1067,7 @@ def build_pdf(
     story: list[Any] = []
     _cover(story, sheet, data)
     _what_was_tested(story, sheet, data)
+    _architectures(story, sheet, data)
     _declarations(story, sheet, data)
     for family in FAMILIES:
         _family_section(story, sheet, data, family, width)
@@ -930,6 +1087,16 @@ def summary_lines(data: ReportData) -> list[str]:
         f"{sum(1 for v in data.axes_seen.values() if len(v) > 1)} axes swept "
         f"and {sum(1 for v in data.axes_seen.values() if len(v) == 1)} held",
     ]
+    tags = {t or "unrecorded" for t in data.architecture.values()}
+    if tags:
+        lines.append(f"{len(tags)} architectures: " + ", ".join(sorted(tags)))
+    if data.paired:
+        lines.append("parity pairs (one world, both drives): " + ", ".join(data.paired))
+    if data.refused:
+        lines.append(
+            f"{sum(data.refused.values())} cells did not apply (no such drive): "
+            + ", ".join(sorted(data.refused))
+        )
     thin = sum(1 for r in data.at_baseline.values() if r.thin)
     absent = sum(1 for r in data.at_baseline.values() if not r.measured)
     lines.append(f"{thin} baseline readings are thin, {absent} were not measured at all")
