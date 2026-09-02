@@ -32,10 +32,12 @@ Run it from the repo root::
 
     python docs/evidence/substrate_step_process_ageing.py
 
-Fixing this is a change to ``benchmarks/run.py`` -- measure each metric in a
-process that has not been aged by the previous one -- and a re-record. It is not
-a change to ``core/``, and the tolerance must not be widened to hide it: the
-gate would then pass by measuring nothing.
+**Fixed** in ADR 0014: each metric is now measured in its own subprocess, which
+does its own setup, so measurement order is no longer an input to a gated number.
+The tolerance was not widened. This script is kept because the ageing itself is
+unexplained -- five candidate causes were eliminated and none of them was it --
+and the next person to see a benchmark drift for no reason should be able to
+re-run the elimination rather than repeat it.
 """
 
 from __future__ import annotations

@@ -37,12 +37,17 @@ jobs:
       - name: determinism
         run: pytest -q tests/test_trace.py
 
-      # Any change to core/ runs the benchmark suite; beyond 15% on the
-      # realistic tier fails. The baseline was recorded on a different machine
-      # than this runner, so the suite times a fixed workload and scales the
-      # comparison by it -- see the module docstring. If the runner turns out
-      # to be too noisy for 15%, loosen it here with --tolerance rather than
+      # Any change to core/ runs the benchmark suite; beyond TOLERANCE (25%)
+      # on the realistic tier fails. The baseline was recorded on a different
+      # machine than this runner, so the suite times a fixed workload and scales
+      # the comparison by it -- see the module docstring. If the runner turns
+      # out to be too noisy, loosen it here with --tolerance rather than
       # deleting the step; a gate that never fires protects nothing.
+      #
+      # The suite spawns a child process per metric (ADR 0014), so this step is
+      # slower than it looks: measuring them in one process made the gated
+      # number a function of measurement order and it reported 145% on
+      # unchanged code.
       #
       # Pinned to the interpreter `benchmarks/baseline.json` was recorded on.
       # Machine speed divides out; a Python version does not, and this step ran

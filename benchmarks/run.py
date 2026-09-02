@@ -4,8 +4,20 @@
     python benchmarks/run.py --update   # record a new baseline
     python benchmarks/run.py --tier dev # smaller, for a quick look
 
-A regression beyond 15% on the ``realistic`` tier exits non-zero, which is how
-CI fails on it.
+A regression beyond ``TOLERANCE`` on the ``realistic`` tier exits non-zero,
+which is how CI fails on it.
+
+**Why each metric gets its own process.** After a few million segment
+re-signings, everything in the process is about twice as slow and stays that
+way -- a freshly built world run for 600 simulated seconds costs 2.1 ms per step
+in a young process and 4.5 ms in an aged one, same code, same seed. This suite
+used to measure all six metrics in one process with ``substrate_step_s`` last,
+so the gated number was partly a function of how much allocation had happened
+earlier in the run, which is not a property of the code under test. It reported
+145% on a branch that touched no file under ``core/``. Each metric is now
+measured in a subprocess that does its own setup, so measurement order is no
+longer an input. See ADR 0014 and
+``docs/evidence/substrate_step_process_ageing.py``.
 
 **Why the numbers are normalised.** A baseline recorded on one machine and
 compared on another measures the machines, not the code. Each run therefore
@@ -41,7 +53,9 @@ uncomfortable; a gate that cries wolf on every matrix leg is worse, because the
 next person deletes it.
 
 Timings are the **minimum** of the repeats, not the mean. The minimum is the
-one measurement that noise can only move in one direction.
+one measurement that noise can only move in one direction -- and, since ageing
+only ever makes a later repeat slower, it is also the least-aged one, which is
+why repeats can share a child process when metrics cannot.
 """
 
 from __future__ import annotations
@@ -49,18 +63,19 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 
 from scionarena.core.linkstate import LinkState
 from scionarena.core.scenario import Scenario, TimelineEvent, TopologySpec
 from scionarena.core.segments import SegmentStore
-from scionarena.core.tiers import TIERS
+from scionarena.core.tiers import TIERS, Tier
 from scionarena.core.tiers import tier as tier_by_name
 from scionarena.core.topology import synthetic
 
@@ -127,78 +142,174 @@ def scope_sample(n_ases: int, n: int, seed: int = 4) -> list[tuple[int, int]]:
     return [(int(a), int(b)) for a, b in pairs if a != b][:n]
 
 
-def measure_tier(name: str, *, repeats: int = 3) -> dict[str, float]:
-    """Every number in one tier's row of the baseline."""
-    band = tier_by_name(name)
-    out: dict[str, float] = {}
+def scenario_for(name: str, duration_s: float) -> Scenario:
+    return Scenario(
+        name=f"bench-{name}",
+        topology=TopologySpec(tier=name),
+        duration_s=duration_s,
+        step_s=1.0,
+    ).then(
+        TimelineEvent(at_s=duration_s / 3, kind="link_degrade", params={"link": 5, "factor": 0.1}),
+        TimelineEvent(at_s=duration_s / 2, kind="demand_surge", params={"mbps": 100.0}),
+    )
 
-    def build_topology() -> float:
+
+# --------------------------------------------------------------------------
+# One measurement each. Every one of these does its own setup, because it runs
+# in a process of its own and cannot borrow the previous metric's -- which is
+# the point: see ADR 0014.
+
+
+def m_topology_build(band: Tier, repeats: int) -> dict[str, float]:
+    def once() -> float:
         start = time.perf_counter()
         synthetic(n_ases=band.n_ases, n_links=band.n_links, seed=0)
         return time.perf_counter() - start
 
-    out["topology_build_s"] = best_of(repeats, build_topology)
+    return {"topology_build_s": best_of(repeats, once)}
 
+
+def m_beaconing_build(band: Tier, repeats: int) -> dict[str, float]:
     topo = synthetic(n_ases=band.n_ases, n_links=band.n_links, seed=0)
 
-    def build_segments() -> float:
+    def once() -> float:
         start = time.perf_counter()
         SegmentStore.for_tier(topo, band, seed=0)
         return time.perf_counter() - start
 
-    out["beaconing_build_s"] = best_of(repeats, build_segments)
+    return {"beaconing_build_s": best_of(repeats, once)}
 
+
+def m_path_query_cold(band: Tier, repeats: int) -> dict[str, float]:
+    topo = synthetic(n_ases=band.n_ases, n_links=band.n_links, seed=0)
     scopes = scope_sample(band.n_ases, n=50)
 
-    def cold_query() -> float:
+    def once() -> float:
         store = SegmentStore.for_tier(topo, band, seed=0)
         start = time.perf_counter()
         for src, dst in scopes:
             store.paths_for(src, dst)
         return (time.perf_counter() - start) / len(scopes)
 
-    out["path_query_cold_s"] = best_of(repeats, cold_query)
+    return {"path_query_cold_s": best_of(repeats, once)}
 
+
+def m_link_metrics_batch(band: Tier, repeats: int) -> dict[str, float]:
+    topo = synthetic(n_ases=band.n_ases, n_links=band.n_links, seed=0)
     store = SegmentStore.for_tier(topo, band, seed=0)
+    scopes = scope_sample(band.n_ases, n=50)
     paths = {scope: [p.ifaces for p in store.paths_for(*scope)] for scope in scopes}
 
-    def metrics_batch() -> float:
+    def once() -> float:
         state = LinkState(topo, seed=0)
         start = time.perf_counter()
         for scope in scopes:
             state.path_metrics_batch(paths[scope])
         return (time.perf_counter() - start) / len(scopes)
 
-    out["link_metrics_batch_s"] = best_of(repeats, metrics_batch)
+    return {"link_metrics_batch_s": best_of(repeats, once)}
 
-    duration_s = 3_600.0
 
-    def substrate_step() -> float:
-        scenario = Scenario(
-            name=f"bench-{name}",
-            topology=TopologySpec(tier=name),
-            duration_s=duration_s,
-            step_s=1.0,
-        ).then(
-            TimelineEvent(
-                at_s=duration_s / 3, kind="link_degrade", params={"link": 5, "factor": 0.1}
-            ),
-            TimelineEvent(at_s=duration_s / 2, kind="demand_surge", params={"mbps": 100.0}),
-        )
-        world = scenario.build()
+def m_substrate_step(band: Tier, repeats: int) -> dict[str, float]:
+    """The metric the process ageing was corrupting, and the one that matters.
+
+    ``repeats - 1`` because an hour of simulated time at ``realistic`` is the
+    most expensive thing the suite does, and the minimum of two is already the
+    young measurement.
+    """
+
+    def once() -> float:
+        world = scenario_for(band.name, 3_600.0).build()
         start = time.perf_counter()
         steps = world.run()
         return (time.perf_counter() - start) / steps
 
-    out["substrate_step_s"] = best_of(max(1, repeats - 1), substrate_step)
+    return {"substrate_step_s": best_of(max(1, repeats - 1), once)}
 
-    out["topology_bytes"] = float(topo.nbytes)
-    out["link_state_bytes"] = float(LinkState(topo, seed=0).nbytes)
-    out["n_segments"] = float(store.n_segments)
+
+def m_sizes(band: Tier, repeats: int) -> dict[str, float]:
+    """Counts, not timings -- but ``n_segments`` had the same disease.
+
+    A store materialises path sets lazily per scope, so its segment count grows
+    as it is queried. The old suite read ``n_segments`` at the end of the tier,
+    off a store that the ``link_metrics_batch`` setup had already queried fifty
+    times, and recorded 18,327 for what is 15,002 at rest. Nothing said which
+    it was, and adding or removing a query anywhere above it moved it.
+
+    Both are worth recording, so both are, under names that say which is which.
+    """
+    topo = synthetic(n_ases=band.n_ases, n_links=band.n_links, seed=0)
+    store = SegmentStore.for_tier(topo, band, seed=0)
+    at_rest = store.n_segments
+    for src, dst in scope_sample(band.n_ases, n=50):
+        store.paths_for(src, dst)
+    return {
+        "topology_bytes": float(topo.nbytes),
+        "link_state_bytes": float(LinkState(topo, seed=0).nbytes),
+        "n_segments": float(at_rest),
+        "n_segments_after_50_scopes": float(store.n_segments),
+    }
+
+
+#: Measurement name -> what to run. The key is what ``--measure-one`` takes; a
+#: measurement may report more than one metric (``sizes`` reports three).
+MEASUREMENTS: Final[Mapping[str, Callable[[Tier, int], dict[str, float]]]] = {
+    "topology_build": m_topology_build,
+    "beaconing_build": m_beaconing_build,
+    "path_query_cold": m_path_query_cold,
+    "link_metrics_batch": m_link_metrics_batch,
+    "substrate_step": m_substrate_step,
+    "sizes": m_sizes,
+}
+
+
+def run_isolated(name: str, measurement: str, repeats: int) -> dict[str, float]:
+    """Run one measurement in a process this one has not aged.
+
+    A child that fails takes the run down with its stderr attached. The
+    alternative -- swallowing it and reporting a zero -- would show up as an
+    enormous improvement and pass the gate.
+    """
+    argv = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--measure-one",
+        measurement,
+        "--tier",
+        name,
+        "--repeats",
+        str(repeats),
+    ]
+    done = subprocess.run(argv, capture_output=True, text=True)
+    if done.returncode != 0:
+        raise RuntimeError(
+            f"measuring {name}.{measurement} failed (exit {done.returncode}):\n{done.stderr}"
+        )
+    try:
+        parsed = json.loads(done.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(
+            f"measuring {name}.{measurement} printed no measurement:\n{done.stdout}"
+        ) from exc
+    return {str(k): float(v) for k, v in parsed.items()}
+
+
+def measure_tier(name: str, *, repeats: int = 3, isolate: bool = True) -> dict[str, float]:
+    """Every number in one tier's row of the baseline.
+
+    ``isolate=False`` measures them all here, in this process, in this order --
+    which is how the suite worked before ADR 0014, and how it produced a 145%
+    regression on unchanged code. It is for a quick local look; the numbers it
+    produces are not comparable with a recorded baseline.
+    """
+    band = tier_by_name(name)
+    out: dict[str, float] = {}
+    for measurement, fn in MEASUREMENTS.items():
+        out.update(run_isolated(name, measurement, repeats) if isolate else fn(band, repeats))
     return out
 
 
-def measure(tiers: list[str], *, repeats: int = 3) -> dict[str, Any]:
+def measure(tiers: list[str], *, repeats: int = 3, isolate: bool = True) -> dict[str, Any]:
     return {
         "schema": 2,
         "recorded_on": {
@@ -210,7 +321,7 @@ def measure(tiers: list[str], *, repeats: int = 3) -> dict[str, Any]:
         "calibration_s": calibration_s(),
         "tolerance": TOLERANCE,
         "gated_tier": GATED_TIER,
-        "tiers": {name: measure_tier(name, repeats=repeats) for name in tiers},
+        "tiers": {name: measure_tier(name, repeats=repeats, isolate=isolate) for name in tiers},
     }
 
 
@@ -284,10 +395,31 @@ def main(argv: list[str] | None = None) -> int:
         help="gate even if the baseline came from another interpreter (it will lie)",
     )
     parser.add_argument("--json", action="store_true", help="print the measurements as JSON")
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help="measure every metric here, in one process, as the suite did before ADR 0014. "
+        "Faster, and the numbers are not comparable with a recorded baseline.",
+    )
+    parser.add_argument(
+        "--measure-one",
+        choices=sorted(MEASUREMENTS),
+        help=argparse.SUPPRESS,  # the child half of --measure-one; not a user-facing knob
+    )
     args = parser.parse_args(argv)
 
     tiers = args.tier or ["dev", "realistic"]
-    current = measure(tiers, repeats=args.repeats)
+
+    if args.measure_one:
+        # One measurement, one process, one line of JSON on stdout. Nothing else
+        # may print here: the parent reads the last line and parses it.
+        print(json.dumps(MEASUREMENTS[args.measure_one](tier_by_name(tiers[0]), args.repeats)))
+        return 0
+
+    # The calibration runs in this process, which measures nothing else once the
+    # metrics moved into children. It has to stay that way -- calibrating in an
+    # aged parent would scale every expectation by the ageing it exists to avoid.
+    current = measure(tiers, repeats=args.repeats, isolate=not args.in_process)
 
     if args.json:
         print(json.dumps(current, indent=2, sort_keys=True))

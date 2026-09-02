@@ -191,33 +191,37 @@ capability declaration that goes with it.
 
 ---
 
-## Blocking Phase 2 — the performance gate measures its own process
+## Blocking Phase 2 — the performance gate measured its own process — **cleared**
 
 Found while running the gate for Phase 1, on a branch touching no file under `core/`:
-`realistic.substrate_step_s` reports 4.5 ms against a 2.09 ms baseline, a 145% regression,
-and it reproduces with the branch stashed. The cause is not the code under test. After a
-few million segment re-signings, *everything in the process* is about twice as slow and
-stays that way — a freshly built world run for 600 simulated seconds costs 2.1 ms per step
-in a young process and 4.5 ms in an aged one.
+`realistic.substrate_step_s` reported 4.5 ms against a 2.09 ms baseline, a 145% regression,
+and it reproduced with the branch stashed. After a few million segment re-signings,
+*everything in the process* is about twice as slow and stays that way — a freshly built
+world run for 600 simulated seconds costs 2.1 ms per step in a young process and 4.5 ms in
+an aged one. `benchmarks/run.py` measured `substrate_step_s` **last**, after four
+allocation-heavy benchmarks in the same process, so the gated number was partly a function
+of how much allocation preceded it.
 
-Ruled out by measurement, each separately: the re-signing accumulator (draining every step
-changes nothing), garbage collection (`gc.disable()` changes nothing), `Segment.__dict__`
-(`slots=True` changes nothing), CPU downclocking (45 s of idle does not recover it, while a
-new process is instantly fast), and the simulation state (work per step is flat — 1.64 M
-re-signings in every 600 s window, `n_segments` never moves).
+**Fixed** in ADR 0014: each metric is measured in its own subprocess, which does its own
+setup. Measurement order is no longer an input. Isolated, `substrate_step_s` repeats to
+within 2% across processes, where it used to come out bimodal (2.19 / 4.36 / 4.70 / 4.42).
+The tolerance was not widened.
 
-`benchmarks/run.py` measures `substrate_step_s` **last**, after four allocation-heavy
-benchmarks in the same process, and B1 raised the churn those produce sixty-fold. So the
-gated number is partly a function of how much allocation preceded it, which is not a
-property of the code the gate protects.
+Isolating it exposed two things the diagnosis did not predict, both found by measuring the
+*old* core through the *new* harness in a worktree at `f68cc3d`:
 
-**Fix.** Measure each metric in a process the previous metric has not aged, then re-record.
-Do not widen the tolerance: a gate that passes by measuring nothing is worse than a red one.
-Evidence and the ruling-out runs: `docs/evidence/substrate_step_process_ageing.py`.
+- **There is no regression between that commit and HEAD.** Isolated, its `substrate_step_s`
+  is 3.45 ms and HEAD's is 3.42 ms. The whole 145% was measurement.
+- **The recorded 2.09 ms is not reproducible at its own commit** — same machine, same
+  interpreter, same numpy, and `benchmarks/run.py` byte-identical between the two. Why it
+  was written cannot be recovered; it is recorded as unexplained rather than guessed at.
+- **`n_segments` had the same disease**, and this one was invisible. A store materialises
+  path sets lazily, so its count grows as it is queried, and the old suite read it off a
+  store that `link_metrics_batch`'s setup had already queried fifty times: 18,327 recorded
+  for what is 15,002 at rest. Both are now recorded, under names that say which is which.
 
-This blocks Phase 2 rather than Phase 1 — Phase 1 changes no substrate code — but it blocks
-it hard, because the sweep engine's whole claim is that two machines running the same suite
-produce comparable numbers.
+Baseline re-recorded; every metric within ±3% on a verification run. Evidence and the
+ruling-out runs: `docs/evidence/substrate_step_process_ageing.py`.
 
 ---
 

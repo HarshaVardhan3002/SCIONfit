@@ -169,18 +169,74 @@ def test_a_patch_release_counts_as_the_same_interpreter(bench: Any):
     assert not bench.interpreter_matches({})
 
 
+METRICS = {
+    "topology_build_s",
+    "beaconing_build_s",
+    "path_query_cold_s",
+    "link_metrics_batch_s",
+    "substrate_step_s",
+    "topology_bytes",
+    "link_state_bytes",
+    "n_segments",
+    "n_segments_after_50_scopes",
+}
+
+
 def test_the_suite_runs_end_to_end_at_the_smoke_tier(bench: Any):
-    """Cheap proof that every metric the runner claims to measure exists."""
+    """Cheap proof that every metric the runner claims to measure exists, and
+    that the subprocess protocol ADR 0014 introduced actually round-trips."""
     measured = bench.measure_tier("smoke", repeats=1)
 
-    assert set(measured) == {
-        "topology_build_s",
-        "beaconing_build_s",
-        "path_query_cold_s",
-        "link_metrics_batch_s",
-        "substrate_step_s",
+    assert set(measured) == METRICS
+    assert all(value > 0.0 for value in measured.values())
+
+
+def test_isolating_a_metric_does_not_change_which_metrics_there_are(bench: Any):
+    """``--in-process`` is kept for a quick local look. It has to measure the
+    same set of things, or the quick look answers a different question."""
+    assert set(bench.measure_tier("smoke", repeats=1, isolate=False)) == METRICS
+
+
+def test_every_measurement_can_be_asked_for_on_its_own(bench: Any):
+    """Names the bug: metrics shared one process, in a fixed order, with
+    ``substrate_step_s`` last -- so the gated number was partly a function of
+    how much allocation the four benchmarks above it had done. It reported a
+    145% regression on a branch that changed no file under ``core/``, and the
+    same core measured 3.45 ms isolated at the commit that recorded 2.09 ms.
+    """
+    assert set(bench.MEASUREMENTS) == {
+        "topology_build",
+        "beaconing_build",
+        "path_query_cold",
+        "link_metrics_batch",
+        "substrate_step",
+        "sizes",
+    }
+    one = bench.run_isolated("smoke", "sizes", 1)
+
+    assert set(one) == {
         "topology_bytes",
         "link_state_bytes",
         "n_segments",
+        "n_segments_after_50_scopes",
     }
-    assert all(value > 0.0 for value in measured.values())
+
+
+def test_a_child_that_fails_takes_the_run_down_with_its_stderr(bench: Any):
+    """Swallowing it and reporting a zero would read as an enormous
+    improvement and pass the gate."""
+    with pytest.raises(RuntimeError) as caught:
+        bench.run_isolated("no-such-tier", "sizes", 1)
+
+    assert "sizes" in str(caught.value)
+
+
+def test_the_segment_count_says_whether_it_was_taken_at_rest(bench: Any):
+    """Names the bug: a store materialises path sets lazily, so its count grows
+    as it is queried. The baseline recorded 18,327 for the realistic tier, which
+    was 15,002 at rest plus whatever fifty scopes of ``link_metrics_batch``
+    setup had pulled in -- and nothing said which of the two it was.
+    """
+    measured = bench.measure_tier("smoke", repeats=1)
+
+    assert measured["n_segments_after_50_scopes"] >= measured["n_segments"]

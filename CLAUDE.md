@@ -132,7 +132,9 @@ test.
 on the `realistic` tier fail CI. Numbers live in `benchmarks/baseline.json`. The tolerance
 was 15% until M4 measured the normaliser's own error at ~10%; the gate fires only on the
 interpreter the baseline was recorded on, because machine speed divides out and a Python
-version does not. Both measurements are in `benchmarks/run.py`'s docstring. Do not assert a
+version does not. Both measurements are in `benchmarks/run.py`'s docstring. Each metric is measured in
+its own subprocess (ADR 0014): sharing one made the gated number a function of
+measurement order, and it reported 145% on unchanged code. Do not assert a
 wall-clock budget in `pytest` — that belongs here, where a calibration exists; a test
 asserts the property instead (`tests/test_performance.py`, the link-metrics pair).
 
