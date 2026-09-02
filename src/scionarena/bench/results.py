@@ -25,9 +25,23 @@ __all__ = ["CellResult", "cell_id", "cell_seed", "load_results", "write_result"]
 #: absorb. Adding a metric is not that; renaming ``axes`` would be.
 SCHEMA = 1
 
+#: Prefix on the error of a cell that could not be run *this way* -- today, the
+#: agentic half of a parity pair for a model with no ``act`` (ADR 0019). It is
+#: kept apart from an ordinary failure because a report that renders the two
+#: alike tells a reader that a mandatory baseline is broken, when all it is is
+#: a forecaster with nothing to be agentic about.
+REFUSED = "refused:"
 
-def cell_id(suite: str, model: str, axes: Mapping[str, str], repeat: int) -> str:
-    """A stable name for one cell, independent of when or where it ran."""
+
+def cell_id(suite: str, model: str, axes: Mapping[str, str], repeat: int, drive: str = "") -> str:
+    """A stable name for one cell, independent of when or where it ran.
+
+    ``drive`` is in the name because the two halves of a parity pair are two
+    cells and must write two files. It is deliberately **not** in
+    :func:`cell_seed`: the pair is only worth anything if both halves face the
+    same world, and a seed derived from this name would hand them different
+    ones. That is the whole reason the seed no longer comes from the id.
+    """
     return (
         TraceHash(label="cell")
         .update(
@@ -36,6 +50,7 @@ def cell_id(suite: str, model: str, axes: Mapping[str, str], repeat: int) -> str
                 "model": model,
                 "axes": dict(axes),
                 "repeat": int(repeat),
+                "drive": drive,
             }
         )
         .short(16)
@@ -49,8 +64,25 @@ def cell_seed(suite: str, model: str, axes: Mapping[str, str], repeat: int) -> i
     function of execution order, and execution order under a process pool is not
     deterministic -- so a cell run on its own and the same cell run in the middle
     of a grid would draw different worlds and be reported as the same thing.
+
+    Note what is *absent*: the drive. One model run two ways is two cells over
+    one world, and comparing them is the only way to separate what an agent
+    forecasts from what it chooses to measure (ADR 0019).
     """
-    return int(cell_id(suite, model, axes, repeat), 16) % (2**31 - 1)
+    return int(
+        TraceHash(label="cell")
+        .update(
+            {
+                "suite": suite,
+                "model": model,
+                "axes": dict(axes),
+                "repeat": int(repeat),
+                "drive": "",
+            }
+        )
+        .short(16),
+        16,
+    ) % (2**31 - 1)
 
 
 @dataclass
@@ -82,6 +114,17 @@ class CellResult:
     #: recorded before this existed, and a report prints that as "unrecorded"
     #: rather than as "declares nothing".
     capabilities: dict[str, Any] = field(default_factory=dict)
+    #: How the model was actually driven: ``fixed`` or ``agentic`` (ADR 0019).
+    #: The resolved value, not what the suite asked for. Empty means the cell
+    #: predates the field, and empty is printed rather than back-filled: those
+    #: cells did run the fixed cycle, but they ran it *by accident*, and a value
+    #: recorded nowhere is a guess whatever it is derived from.
+    #:
+    #: Load-bearing for the operational family. A decision latency means one
+    #: thing for a model that spent its slot choosing probes and another for one
+    #: handed observations by the driver, and a cell that does not say which
+    #: cannot be compared with a cell that ran the other way.
+    drive: str = ""
     #: What the substrate was when this ran. Recorded, not enforced: forcing a
     #: re-run on a mismatch would invalidate a week of stress-tier results that
     #: may be exactly what somebody wants to compare against.
@@ -93,6 +136,11 @@ class CellResult:
     @property
     def ok(self) -> bool:
         return self.error is None
+
+    @property
+    def refused(self) -> bool:
+        """This cell was not applicable, as opposed to having gone wrong."""
+        return self.error is not None and self.error.startswith(REFUSED)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +157,7 @@ class CellResult:
             "scenario": self.scenario,
             "tier": self.tier,
             "capabilities": dict(self.capabilities),
+            "drive": self.drive,
             "substrate_digest": self.substrate_digest,
             "metrics": dict(self.metrics),
             "wall_clock_s": round(self.wall_clock_s, 4),
@@ -130,6 +179,7 @@ class CellResult:
             "scenario",
             "tier",
             "capabilities",
+            "drive",
             "substrate_digest",
             "metrics",
             "wall_clock_s",

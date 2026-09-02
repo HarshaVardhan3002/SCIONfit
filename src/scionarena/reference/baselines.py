@@ -71,6 +71,7 @@ class Persistence:
     def __init__(self) -> None:
         self.capabilities = Capabilities(
             name="Persistence",
+            architecture="persistence",
             version="1.0.0",
             authors="mandatory baseline, Master Spec §28",
             handles_unseen_interfaces=True,
@@ -149,6 +150,7 @@ class LatestSample:
     def __init__(self) -> None:
         self.capabilities = Capabilities(
             name="LatestSample",
+            architecture="ewma",
             version="1.0.0",
             authors="mandatory baseline, Master Spec §28",
             handles_unseen_interfaces=True,
@@ -235,6 +237,7 @@ class Tier0Only:
         self.window = int(window or self.WINDOW)
         self.capabilities = Capabilities(
             name="Tier0Only",
+            architecture="robust_filter",
             version="1.0.0",
             authors="mandatory baseline, Master Spec §28 / §19.1",
             distributional=True,

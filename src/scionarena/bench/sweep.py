@@ -34,10 +34,10 @@ from ..core.hosts import HostParams
 from ..core.scenario import ProbeLimits, Scenario, TopologySpec
 from ..core.trace import TraceHash
 from ..exposure.loading import ModelLoadError, load_model, resolve
-from ..exposure.loop import LoopConfig, busiest_scopes, run_loop
+from ..exposure.loop import LoopConfig, busiest_scopes, resolve_drive, run_loop
 from ..reference.baselines import MANDATORY_BASELINES
 from .axes import AXES, baseline_cell, settings_for
-from .results import CellResult, cell_id, cell_seed, load_results, write_result
+from .results import REFUSED, CellResult, cell_id, cell_seed, load_results, write_result
 
 __all__ = ["Cell", "SweepSpec", "plan", "run_cell", "run_sweep"]
 
@@ -63,9 +63,18 @@ class Cell:
     axes: Mapping[str, str]
     repeat: int
     mandatory: bool = False
+    #: Set only by a parity sweep, where one model is run both ways over one
+    #: world. Empty means "whatever the suite says", which is every other cell.
+    drive: str = ""
 
     def identity(self, suite: str) -> tuple[str, int]:
-        return cell_id(suite, self.model, self.axes, self.repeat), cell_seed(
+        """This cell's name, and the seed of the world it runs in.
+
+        The two do not come from the same hash. The name carries the drive so a
+        parity pair writes two files; the seed does not, so the pair shares one
+        world. A pair over two worlds would measure the seed.
+        """
+        return cell_id(suite, self.model, self.axes, self.repeat, self.drive), cell_seed(
             suite, self.model, self.axes, self.repeat
         )
 
@@ -117,6 +126,23 @@ class SweepSpec:
     #: Forecast horizons, in simulated seconds. §28 asks "does anything beat
     #: persistence at +60 s / +300 s", which is why those two beside the nowcast.
     horizons_s: tuple[float, ...] = (0.0, 60.0, 300.0)
+    #: How to drive the models: ``auto``, ``fixed``, ``agentic`` or ``both``
+    #: (ADR 0019). Distinct from ``mode``, which is the shape of the matrix.
+    #:
+    #: ``auto`` believes each model's ``uses_tools`` declaration, so a suite
+    #: mixing agents and forecasters runs each the way its author meant. That is
+    #: the right default and it is also the confounded comparison: the agent
+    #: picks its own probes and the forecaster is handed ours. ``fixed`` runs
+    #: every model on the same information diet, which is the only way to ask
+    #: which architecture forecasts better rather than which probes better.
+    #:
+    #: ``both`` runs the parity pair: every cell twice, ``fixed`` and
+    #: ``agentic``, over one world. It doubles the matrix, and what it buys is
+    #: the only measurement of what choosing your own probes is *worth*. A model
+    #: with no ``act`` records a refusal for its agentic half rather than
+    #: quietly running the fixed cycle twice, and the refusal costs nothing
+    #: because it happens before the world is built.
+    drive: str = "auto"
     #: Which axes to move. Empty means all of them.
     only: tuple[str, ...] = ()
     baseline: Mapping[str, str] = field(default_factory=baseline_cell)
@@ -125,6 +151,10 @@ class SweepSpec:
     def __post_init__(self) -> None:
         if self.mode not in ("oat", "grid"):
             raise ValueError(f"mode must be 'oat' or 'grid', not {self.mode!r}")
+        if self.drive not in ("auto", "fixed", "agentic", "both"):
+            raise ValueError(
+                f"drive must be 'auto', 'fixed', 'agentic' or 'both', not {self.drive!r}"
+            )
         for name in self.only:
             if name not in AXES:
                 raise ValueError(f"unknown axis {name!r}; the axes are {sorted(AXES)}")
@@ -172,6 +202,7 @@ class SweepSpec:
                     "name": self.name,
                     "tier": self.tier,
                     "mode": self.mode,
+                    "drive": self.drive,
                     "cycles": self.cycles,
                     "decision_s": self.decision_s,
                     "scopes": self.scopes,
@@ -224,11 +255,21 @@ def plan(spec: SweepSpec) -> list[Cell]:
     not the execution order -- the pool decides that -- which is why a cell's
     seed comes from the cell rather than from its position here.
     """
+    drives = ("fixed", "agentic") if spec.drive == "both" else ("",)
     cells: list[Cell] = []
     for model, mandatory in spec.all_models():
         for axes in _points(spec):
             for repeat in range(spec.repeats):
-                cells.append(Cell(model=model, axes=axes, repeat=repeat, mandatory=mandatory))
+                for drive in drives:
+                    cells.append(
+                        Cell(
+                            model=model,
+                            axes=axes,
+                            repeat=repeat,
+                            mandatory=mandatory,
+                            drive=drive,
+                        )
+                    )
     return cells
 
 
@@ -259,6 +300,8 @@ def _config(spec: SweepSpec, cell: Cell, seed: int) -> LoopConfig:
             # to predict anything could not report three of the four families.
             record_forecasts=True,
             horizons_s=spec.horizons_s,
+            # ``both`` sets it per cell; every other setting is suite-wide.
+            drive=cell.drive or spec.drive,
         ),
         **loop,
     )
@@ -267,17 +310,21 @@ def _config(spec: SweepSpec, cell: Cell, seed: int) -> LoopConfig:
 def _declared(model: Any) -> dict[str, Any]:
     """What the model says about itself, as the report will print it.
 
-    Booleans and the three identifying strings, and nothing else: ``extra`` is
-    a free-form dict a model author may put anything in, including something
+    Booleans and the identifying strings, and nothing else: ``extra`` is a
+    free-form dict a model author may put anything in, including something
     unserialisable, and a cell that failed to write because of it would lose a
     run over a field no report reads.
+
+    ``architecture`` travels with them because it is the grouping key the
+    two-level comparison needs, and it has to be recorded per cell for the same
+    reason the tier is: the model object is gone by the time a report is built.
     """
     caps = getattr(model, "capabilities", None)
     if caps is None:
         return {}
     fields = vars(caps)
     out: dict[str, Any] = {k: v for k, v in fields.items() if isinstance(v, bool)}
-    for key in ("name", "version", "authors", "notes"):
+    for key in ("name", "version", "authors", "notes", "architecture"):
         value = fields.get(key)
         if isinstance(value, str) and value:
             out[key] = value
@@ -311,6 +358,18 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
         model = load_model(cell.model)
         result.label = getattr(model.capabilities, "name", cell.model)
         result.capabilities = _declared(model)
+        # Before the world is built, so a model that cannot be driven this way
+        # costs a refusal rather than a topology. Under ``drive="both"`` that is
+        # the difference between a cheap "this one has no agentic half" and
+        # rebuilding the realistic tier to find it out.
+        config = _config(spec, cell, seed)
+        try:
+            result.drive = resolve_drive(model, config.drive)
+        except ValueError as exc:
+            # Not applicable rather than broken, and the distinction is the
+            # whole reason a parity sweep can include the five baselines at all.
+            result.error = f"{REFUSED} {exc}"
+            return result
         world = scenario.build()
         result.substrate_digest = world.digest()
         scopes = busiest_scopes(world, spec.scopes)
@@ -319,7 +378,8 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
                 f"no scope in the {spec.tier} tier has two paths to choose between, "
                 "so no model could differ from any other here"
             )
-        loop = run_loop(model, scenario, scopes, config=_config(spec, cell, seed), world=world)
+        loop = run_loop(model, scenario, scopes, config=config, world=world)
+        result.drive = loop.drive
         # The report card is M3's fixed set and stays fixed so an old result
         # still renders; the registry is what a report reads (ADR 0017), and a
         # metric it could not measure is None rather than zero.

@@ -53,15 +53,17 @@ __all__ = [
     "resolve",
 ]
 
-#: The models we ship, as aliases for import paths. ``BudgetedProber`` is
-#: deliberately absent: it needs the scopes it will be advising at construction
-#: time, so it cannot be built from a bare name, and it is reached through the
-#: agent front-end instead.
+#: The models we ship, as aliases for import paths. ``prober`` is the only
+#: tool-using one, and it used to be absent from here because it needed the
+#: scopes it would advise at construction time -- which a bench user cannot
+#: know. It asks the session instead (ADR 0019), so it loads from a bare name
+#: like everything else and the agentic path is reachable from a sweep.
 BUILTIN_MODELS: Final[Mapping[str, str]] = {
     "ema": "scionarena.reference.models:EMAOracle",
     "minrtt": "scionarena.reference.models:MinRTTGreedy",
     "proportional": "scionarena.reference.models:CapacityProportional",
     "reference": "scionarena.reference.models:ReferenceStochastic",
+    "prober": "scionarena.reference.agents:BudgetedProber",
 }
 
 #: What may follow the colon: a name, or a dotted path to a nested class.

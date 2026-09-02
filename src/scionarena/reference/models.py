@@ -62,6 +62,7 @@ class EMAOracle:
         self.alpha = alpha
         self.capabilities = Capabilities(
             name="EMAOracle",
+            architecture="ewma",
             version="1.0.0",
             authors="reference implementation of the Path Oracle scoring service",
             distributional=False,
@@ -153,6 +154,7 @@ class MinRTTGreedy(EMAOracle):
         super().__init__(alpha=0.5)
         self.capabilities = Capabilities(
             name="MinRTTGreedy",
+            architecture="heuristic",
             version="1.0.0",
             handles_unseen_interfaces=True,
             composes_unseen_paths=True,
@@ -179,6 +181,7 @@ class CapacityProportional:
     def __init__(self):
         self.capabilities = Capabilities(
             name="CapacityProportional",
+            architecture="static",
             version="1.0.0",
             emits_assignment=True,
             handles_unseen_interfaces=True,
@@ -255,6 +258,7 @@ class ReferenceStochastic:
         self.msa_iters = msa_iters
         self.capabilities = Capabilities(
             name="ReferenceStochastic",
+            architecture="stochastic",
             version="0.1.0",
             authors="scionfit reference",
             distributional=True,

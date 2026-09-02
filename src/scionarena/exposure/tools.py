@@ -58,6 +58,13 @@ BWTEST_BYTES = 5_000_000
 BWTEST_LOAD_MBPS = 50.0
 
 HISTORY_PER_EVENT_S = 0.0002
+
+#: Listing the scopes is configuration, not measurement: a deployed
+#: recommendation node is told which source-destination pairs it serves rather
+#: than discovering them. Priced as one query anyway, because a call that costs
+#: nothing is a call a model is free to make every round.
+SCOPES_FIXED_S = QUERY_FIXED_S
+SCOPES_BYTES_PER_SCOPE = 40
 SUBSCRIBE_S = 0.005
 SUBSCRIBE_BYTES = 256
 PUBLISH_S = 0.001
@@ -179,6 +186,8 @@ class ToolContext(Protocol):
     def record_advisory(
         self, src: str, dst: str, weights: Mapping[str, float], meta: Mapping[str, Any] | None
     ) -> dict[str, Any]: ...
+
+    def served_scopes(self) -> list[tuple[str, str]]: ...
 
 
 Handler = Callable[[ToolContext, Mapping[str, Any]], dict[str, Any]]
@@ -367,6 +376,20 @@ def _subscribe(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     return {"handle": sub.handle, "stream": sub.stream, "since_s": round(sub.created_s, 6)}
 
 
+def _list_scopes(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    scopes = ctx.served_scopes()
+    return {
+        "t": round(ctx.now, 6),
+        "scopes": [{"src": a, "dst": b} for a, b in scopes],
+        "n_scopes": len(scopes),
+    }
+
+
+def _scopes_cost(args: Mapping[str, Any], payload: Mapping[str, Any]) -> Cost:
+    n = int(payload.get("n_scopes", 0))
+    return Cost(wall_clock_s=SCOPES_FIXED_S, nbytes=SCOPES_BYTES_PER_SCOPE * n)
+
+
 def _publish_advisory(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     weights = args["weights"]
     if not isinstance(weights, dict) or not weights:
@@ -378,6 +401,18 @@ def _publish_advisory(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, An
 
 
 TOOLS: dict[str, ToolSpec] = {
+    "list_scopes": ToolSpec(
+        name="list_scopes",
+        description=(
+            "The source-destination pairs this node is responsible for advising. "
+            "Configuration rather than measurement -- a deployed node is told what "
+            "it serves -- but it costs a query, and the answer can change during a "
+            "run as scopes are added or drained."
+        ),
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=_list_scopes,
+        cost=_scopes_cost,
+    ),
     "query_paths": ToolSpec(
         name="query_paths",
         description=(

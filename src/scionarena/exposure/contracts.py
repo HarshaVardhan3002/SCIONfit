@@ -317,6 +317,18 @@ class Capabilities:
     version: str = "0.0.0"
     authors: str = ""
 
+    #: What kind of thing this is, for the grouping the benchmark exists to do:
+    #: find the best architecture, then the best variant within it. Conventional
+    #: values are ``persistence``, ``ewma``, ``gbdt``, ``gnn``, ``dqn``,
+    #: ``llm_api`` and ``llm_local``, but the field is deliberately not
+    #: validated against an enumeration -- a list of known architectures living
+    #: in the one module every model author imports would make adding an
+    #: architecture a change to the contract. An unrecognised tag groups by
+    #: itself, which is the right behaviour for something new. Empty means the
+    #: model did not say, and a report prints that rather than guessing from the
+    #: class name (ADR 0019).
+    architecture: str = ""
+
     distributional: bool = False  # R5
     demand_conditioned: bool = False  # R6
     monotone_in_demand: bool = False  # R7

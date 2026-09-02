@@ -18,12 +18,13 @@ under it means nothing.
 """
 
 from .axes import AXES, Axis, AxisValue, baseline_cell, settings_for
-from .results import CellResult, cell_id, cell_seed, load_results, write_result
+from .results import REFUSED, CellResult, cell_id, cell_seed, load_results, write_result
 from .score import Threshold, compliant_share_threshold, regimes
 from .sweep import Cell, SweepSpec, plan, run_cell, run_sweep, summarise
 
 __all__ = [
     "AXES",
+    "REFUSED",
     "Axis",
     "AxisValue",
     "Cell",

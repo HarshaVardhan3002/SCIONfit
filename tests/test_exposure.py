@@ -473,7 +473,10 @@ def test_adding_a_sixth_tool_changes_nothing_else():
 
     assert result.ok and result.data["n"] > 0
     assert result.cost.nbytes == 16
-    assert len(tool_definitions("anthropic", registry)) == 6
+    # Counted against the registry rather than against a literal, so that
+    # shipping a sixth tool of our own does not fail the test whose whole claim
+    # is that adding one changes nothing else.
+    assert len(tool_definitions("anthropic", registry)) == len(TOOLS) + 1
 
 
 # --------------------------------------------------------------------------

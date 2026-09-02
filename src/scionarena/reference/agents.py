@@ -36,21 +36,35 @@ class BudgetedProber(ReferenceStochastic):
 
     def __init__(
         self,
-        scopes: Sequence[tuple[str, str]],
+        scopes: Sequence[tuple[str, str]] = (),
         *,
         probes_per_turn: int = 2,
         sla: SLA | None = None,
         limit: int = 20,
         n_hosts: int = 100,
     ):
+        """``scopes`` is optional, and leaving it out is the normal case.
+
+        A model submitted to ``bench`` arrives as an import path and a few
+        constructor arguments (ADR 0013), chosen by someone who has not seen the
+        world it will run in -- so it cannot be handed the source-destination
+        pairs it serves. It asks for them instead, once per episode, through
+        ``list_scopes``. Passing them in stays supported because a test that
+        wants one scope should not have to build a world to name it.
+        """
         super().__init__()
         self.scopes = list(scopes)
+        #: Whether the scope list was configured or has to be asked for. A
+        #: model told its scopes still re-asks after a reset, because a scope
+        #: can be added or drained mid-run.
+        self._scopes_given = bool(scopes)
         self.probes_per_turn = probes_per_turn
         self.sla = sla or SLA()
         self.limit = limit
         self.n_hosts = n_hosts
         self.capabilities = Capabilities(
             name="BudgetedProber",
+            architecture="stochastic",
             version="0.1.0",
             authors="scionarena reference",
             distributional=True,
@@ -82,6 +96,8 @@ class BudgetedProber(ReferenceStochastic):
         self._turn = 0
         self._handle = None
         self._blind = False
+        if not self._scopes_given:
+            self.scopes = []
 
     # ------------------------------------------------------------------ agent
 
@@ -100,6 +116,12 @@ class BudgetedProber(ReferenceStochastic):
             opened = session.call("subscribe", stream="telemetry")
             if self._note(opened):
                 self._handle = opened.data["handle"]
+        if not self.scopes:
+            # Costs a query, and a refusal here leaves the turn with nothing to
+            # advise on -- which is the honest outcome, not an excuse to guess.
+            listed = session.call("list_scopes")
+            if self._note(listed):
+                self.scopes = [(s["src"], s["dst"]) for s in listed.data["scopes"]]
 
         self._ingest(session)
 

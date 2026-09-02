@@ -58,7 +58,7 @@ from scionarena.instrument.detectors import (
 from scionarena.instrument.metrics import Forecast, MetricInput, compute
 from scionarena.instrument.sampler import Sampler, Series
 
-__all__ = ["LoopConfig", "LoopResult", "run_loop", "busiest_scopes", "compare"]
+__all__ = ["LoopConfig", "LoopResult", "run_loop", "busiest_scopes", "compare", "resolve_drive"]
 
 
 @dataclass(frozen=True)
@@ -129,6 +129,21 @@ class LoopConfig:
     #: Track this many of the most contested interfaces.
     n_tracked: int = 24
     seed: int = 0
+    #: Which way to drive the model (ADR 0019).
+    #:
+    #: ``auto`` honours the model's own ``uses_tools`` declaration, ``fixed``
+    #: forces the observe/predict/advise cycle, and ``agentic`` hands the
+    #: model the session and its deadline and leaves it alone. ``agentic`` on a
+    #: model with no ``act`` raises rather than falling back: a silent fallback
+    #: is the bug this parameter exists to fix, and reintroducing it as an error
+    #: path would be worse than leaving it where it was.
+    #:
+    #: The point of ``fixed`` is that the probing policy in ``_one_scope`` is
+    #: *ours* -- dumb on purpose and identical for every model -- so forcing a
+    #: tool-using model through it compares architectures with information
+    #: acquisition held equal. The difference between the two on one model
+    #: is the value of choosing your own probes, which nothing else measures.
+    drive: str = "auto"
 
 
 @dataclass
@@ -138,6 +153,10 @@ class LoopResult:
     model: str
     scenario: str
     config: LoopConfig
+    #: How the model was actually driven: ``fixed`` or ``agentic``. The
+    #: *resolved* value, never the requested one, so a result says which way it
+    #: ran rather than which way it was asked to (ADR 0019).
+    drive: str = "fixed"
     #: Simulated seconds per decision round as actually kept, which is
     #: ``config.decision_s`` unless ``adaptive_cadence`` widened it.
     cadence_s: float = 0.0
@@ -324,6 +343,7 @@ class LoopResult:
         return {
             "model": self.model,
             "scenario": self.scenario,
+            "drive": self.drive,
             "cycles": self.config.cycles,
             "decision_s": round(self.cadence_s, 1),
             "sample_s": round(self.sample_s, 1),
@@ -406,18 +426,25 @@ def run_loop(
     for a, b in indices:
         world.add_scope(a, b, params=_params_for(world, a, b, base, cfg))
 
-    result = LoopResult(model=session.label, scenario=scenario.name, config=cfg)
+    drive = resolve_drive(model, cfg.drive)
+    result = LoopResult(model=session.label, scenario=scenario.name, config=cfg, drive=drive)
     tracked = _tracked_ifaces(world, indices, cfg.n_tracked)
 
     model.reset(session.view(), seed=cfg.seed)
     # One telemetry subscription for the whole episode. The records are raw and
     # are charged as they arrive, exactly as they would be for a model that
     # subscribed itself; the driver only forwards them to ``observe``.
-    subscribed = session.call("subscribe", stream="telemetry")
-    handle = str(subscribed.get("handle", "")) if subscribed.ok else ""
+    #
+    # Not in agentic drive. There the model subscribes for itself if it wants a
+    # stream, and a driver-held subscription it has no handle for would charge
+    # it for records it cannot read.
+    handle = ""
+    if drive == "fixed":
+        subscribed = session.call("subscribe", stream="telemetry")
+        handle = str(subscribed.get("handle", "")) if subscribed.ok else ""
 
     started = time.perf_counter()
-    cadence = _calibrate(model, session, scopes, indices, cfg, handle)
+    cadence = _calibrate(model, session, scopes, indices, cfg, handle, drive)
     result.cadence_s = cadence
     result.sample_s = cfg.sample_s if cfg.sample_s is not None else cadence
     if result.sample_s > cadence + 1e-9:
@@ -448,7 +475,18 @@ def run_loop(
         deadline = session.now + cadence
         for cycle in range(cfg.cycles):
             published = len(session.advisories)
-            _turn(model, session, scopes, indices, cfg, cycle, handle, result.forecasts)
+            _turn(
+                model,
+                session,
+                scopes,
+                indices,
+                cfg,
+                cycle,
+                handle,
+                result.forecasts,
+                drive=drive,
+                deadline_s=deadline,
+            )
             if session.now < deadline:
                 session.advance(deadline - session.now)
             else:
@@ -467,6 +505,36 @@ def run_loop(
     return result
 
 
+def resolve_drive(model: PathModel, requested: str = "auto") -> str:
+    """Which way this model will actually be driven. See ADR 0019.
+
+    ``auto`` believes the model's declaration, which is what an unchanged caller
+    gets. ``fixed`` always succeeds -- every model implements the four
+    ``PathModel`` methods, including a tool-using one, because
+    :class:`~scionarena.exposure.contracts.ToolUsingModel` inherits from
+    ``PathModel``. ``agentic`` is the only one that can refuse, and it refuses
+    loudly: a fallback to the fixed cycle here would score a model on a code path
+    its author never intended anyone to time, silently, which is exactly what
+    ``run_loop`` did before this function existed.
+    """
+    can_act = callable(getattr(model, "act", None))
+    if requested == "auto":
+        declared = bool(getattr(model.capabilities, "uses_tools", False))
+        return "agentic" if (declared and can_act) else "fixed"
+    if requested == "fixed":
+        return "fixed"
+    if requested == "agentic":
+        if not can_act:
+            name = getattr(model.capabilities, "name", type(model).__name__)
+            raise ValueError(
+                f"drive='agentic' was asked for but {name!r} has no act(); running it "
+                "through the fixed cycle instead would report a decision latency the "
+                "model never intended, so this is a refusal rather than a fallback"
+            )
+        return "agentic"
+    raise ValueError(f"drive must be 'auto', 'fixed' or 'agentic', not {requested!r}")
+
+
 def _turn(
     model: PathModel,
     session: Session,
@@ -476,11 +544,53 @@ def _turn(
     cycle: int,
     handle: str,
     forecasts: list[Forecast] | None = None,
+    *,
+    drive: str = "fixed",
+    deadline_s: float | None = None,
 ) -> None:
     """One decision round: drain what arrived, then let the model act per scope."""
+    if drive == "agentic":
+        _agentic_turn(model, session, scopes, cfg, deadline_s, forecasts)
+        return
     feed = _drain_by_scope(session, handle)
     for (src, dst), _ in zip(scopes, indices, strict=True):
         _one_scope(model, session, src, dst, cycle, cfg, feed.get((src, dst), []), forecasts)
+
+
+def _agentic_turn(
+    model: PathModel,
+    session: Session,
+    scopes: Sequence[tuple[str, str]],
+    cfg: LoopConfig,
+    deadline_s: float | None,
+    forecasts: list[Forecast] | None,
+) -> None:
+    """One decision round the model runs itself.
+
+    The driver opens the turn, sets the deadline and gets out of the way. It
+    does not query, does not probe, does not call ``observe`` and does not call
+    ``advise``: the model publishes through ``publish_advisory`` like any other
+    caller, so the latency accounting in ``run_loop`` needs no special case.
+
+    Forecasts are still recorded, after ``act`` and inside the same turn, over
+    whatever paths the model chose to learn about. A model that never queried a
+    scope has no paths there and records nothing for it -- a finding about the
+    model rather than a gap in the ledger.
+    """
+    act = model.act  # type: ignore[attr-defined]  # resolved by ``resolve_drive``
+    session.begin_turn()
+    session.deadline_s = deadline_s
+    try:
+        slot = cfg.decision_s if deadline_s is None else max(0.0, deadline_s - session.now)
+        act(session, slot)
+    finally:
+        session.deadline_s = None
+    if not cfg.record_forecasts or forecasts is None:
+        return
+    for src, dst in scopes:
+        paths = session.known_paths(src, dst)
+        if paths:
+            _forecast(model, session, src, dst, paths, cfg, forecasts)
 
 
 def _calibrate(
@@ -490,6 +600,7 @@ def _calibrate(
     indices: Sequence[tuple[int, int]],
     cfg: LoopConfig,
     handle: str,
+    drive: str = "fixed",
 ) -> float:
     """Find a cadence the episode can actually keep, by running a few rounds.
 
@@ -512,7 +623,17 @@ def _calibrate(
     worst = 0.0
     for cycle in range(cfg.calibration_cycles):
         mark = session.now
-        _turn(model, session, scopes, indices, cfg, cycle, handle)
+        _turn(
+            model,
+            session,
+            scopes,
+            indices,
+            cfg,
+            cycle,
+            handle,
+            drive=drive,
+            deadline_s=mark + cfg.decision_s,
+        )
         worst = max(worst, session.now - mark)
         if session.now < mark + cfg.decision_s:
             session.advance(mark + cfg.decision_s - session.now)

@@ -130,16 +130,34 @@ def test_a_mistyped_attribute_offers_the_names_that_module_has() -> None:
 
 
 def test_a_constructor_that_needs_arguments_names_them() -> None:
-    """``BudgetedProber`` needs the scopes it will advise. The old loader raised
-    a bare ``TypeError`` from inside ``__init__`` and named nothing."""
+    """The old loader raised a bare ``TypeError`` from inside ``__init__`` and
+    named nothing.
+
+    ``BudgetedProber`` used to be the example here, and no longer is: a model
+    loaded by ``bench`` arrives as a bare name chosen by someone who has not
+    seen the world, so requiring its scopes at construction made the agentic
+    path unreachable from a sweep. It asks the session instead (ADR 0019).
+    ``Capabilities`` stands in as something that genuinely cannot be built
+    without an argument."""
     with pytest.raises(ModelLoadError) as caught:
-        load_model("scionarena.reference.agents:BudgetedProber")
-    assert "scopes" in str(caught.value)
+        load_model("scionarena.exposure.contracts:Capabilities")
+    assert "name" in str(caught.value)
 
 
 def test_a_constructor_argument_can_be_supplied() -> None:
-    model = load_model("scionarena.reference.agents:BudgetedProber", args={"scopes": []})
+    model = load_model("scionarena.reference.agents:BudgetedProber", args={"probes_per_turn": 4})
     assert model.capabilities.uses_tools
+    assert model.probes_per_turn == 4
+
+
+def test_an_agent_loads_from_a_bare_name() -> None:
+    """Names the bug: ``BudgetedProber`` was absent from ``BUILTIN_MODELS``
+    because it needed its scopes up front, so the only tool-using model in the
+    repo could not be named in a suite and the agentic path had nothing to
+    exercise it."""
+    model = load_model("prober")
+    assert model.capabilities.uses_tools
+    assert model.scopes == []
 
 
 def test_a_missing_method_is_named_before_the_run_rather_than_during_it(tmp_path: Path) -> None:

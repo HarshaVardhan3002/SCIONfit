@@ -908,6 +908,16 @@ class Session:
 
     # ---------------------------------------------------------------- reports
 
+    def served_scopes(self) -> list[tuple[str, str]]:
+        """The scopes the world has hosts on, as AS identifiers.
+
+        Read off the host population rather than remembered from whatever the
+        driver was asked to run, so an agentic model and a driven one are told
+        the same thing, and so a scope added mid-run appears.
+        """
+        name = self._world.topology.as_name
+        return [(name(a), name(b)) for a, b in sorted(self._world.hosts.scopes)]
+
     def summary(self) -> dict[str, Any]:
         """For the front-ends' report cards. Not for the model."""
         by_tool: dict[str, dict[str, int]] = {}
