@@ -82,6 +82,13 @@ def test_the_page_renders_with_no_placeholders_left(base: str) -> None:
     assert "{css}" not in page and "{tiers}" not in page
 
 
+def test_the_page_offers_the_model_field_and_asks_for_the_declaration(base: str) -> None:
+    """The whole of Phase 1 reaches a browser user through this one input."""
+    page = get(base, "/")
+    assert "name='models'" in page
+    assert "/api/model?spec=" in page, "the page has to ask, or the field explains nothing"
+
+
 def test_the_page_is_the_same_string_the_server_serves(base: str) -> None:
     assert get(base, "/") == _page()
 
@@ -175,6 +182,30 @@ def test_impossible_sizes_are_clamped_not_obeyed(raw: dict, field: str, expected
 
 def test_models_can_be_given_as_a_string() -> None:
     assert _params({"models": "minrtt, reference"})["models"] == ["minrtt", "reference"]
+
+
+def test_the_capability_endpoint_answers_before_any_run(base: str) -> None:
+    """The point of the field is that a user sees what their model will be
+    tested on while they can still change the declaration (ADR 0013)."""
+    report = json.loads(get(base, "/api/model?spec=minrtt"))
+
+    assert report["name"] == "MinRTTGreedy"
+    assert report["resolved"] == "scionarena.reference.models:MinRTTGreedy"
+    assert "R4" in report["tested"] and "R5" in report["declared_absent"]
+
+
+def test_a_model_that_will_not_load_is_a_sentence_not_a_traceback(base: str) -> None:
+    report = json.loads(get(base, "/api/model?spec=minrt"))
+
+    assert "minrtt" in report["error"], "the report offers the name it meant"
+    assert "Traceback" not in report["error"]
+
+
+def test_a_run_with_an_unloadable_model_is_refused_before_the_worker_starts(base: str) -> None:
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        post(base, "/api/run", {**TINY, "models": "minrtt,not.a.module:Model"})
+    assert raised.value.code == 400
+    assert "not a module" in raised.value.read().decode().replace(".", " ")
 
 
 # --------------------------------------------------------------------------

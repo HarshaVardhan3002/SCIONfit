@@ -3,25 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 
-from ..reference import REFERENCE_MODELS
+from ..exposure.loading import BUILTIN_MODELS, ModelLoadError, capability_report, load_model
 from .runner import check, comparison_table
 
 
 def _load(spec: str):
-    """Load a model from ``module:Attr`` or from the reference set by name."""
-    if spec in REFERENCE_MODELS:
-        return REFERENCE_MODELS[spec]()
-    if ":" not in spec:
-        raise SystemExit(
-            f"unknown model {spec!r}. Use one of {sorted(REFERENCE_MODELS)} "
-            f"or 'package.module:ClassName'."
-        )
-    mod_name, attr = spec.split(":", 1)
-    obj = getattr(importlib.import_module(mod_name), attr)
-    return obj() if isinstance(obj, type) else obj
+    """One door for every model, ours included. See ADR 0013."""
+    try:
+        return load_model(spec)
+    except ModelLoadError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +26,8 @@ def main(argv: list[str] | None = None) -> int:
 
     c = sub.add_parser("check", help="run the conformance suite on one model")
     c.add_argument(
-        "model", help="'ema' | 'minrtt' | 'proportional' | 'reference' | 'my.module:MyModel'"
+        "model",
+        help=f"{' | '.join(sorted(BUILTIN_MODELS))} | 'my.module:MyModel' | './my_model.py:MyModel'",
     )
     c.add_argument("--seed", type=int, default=0)
     c.add_argument(
@@ -52,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument(
         "--strict", action="store_true", help="exit non-zero unless the verdict is CONFORMANT"
     )
+    c.add_argument(
+        "--no-capabilities",
+        action="store_true",
+        help="skip the declaration report printed before the run",
+    )
 
     m = sub.add_parser("compare", help="run every reference model and print a matrix")
     m.add_argument("--seed", type=int, default=0)
@@ -62,17 +61,28 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.cmd == "list":
-        for k, v in REFERENCE_MODELS.items():
-            caps = v().capabilities
-            print(f"  {k:<14} {caps.name:<22} {caps.notes[:60]}")
+        for name, target in BUILTIN_MODELS.items():
+            caps = _load(name).capabilities
+            print(f"  {name:<14} {caps.name:<22} {target}")
+            if caps.notes:
+                print(f"  {'':<14} {caps.notes[:76]}")
         return 0
 
     if a.cmd == "compare":
-        cards = {k: check(v(), seed=a.seed, repeats=a.repeats) for k, v in REFERENCE_MODELS.items()}
+        cards = {
+            name: check(_load(name), seed=a.seed, repeats=a.repeats) for name in BUILTIN_MODELS
+        }
         print(comparison_table(cards))
         return 0
 
-    card = check(_load(a.model), seed=a.seed, repeats=a.repeats, n_paths=a.paths, drift=a.drift)
+    model = _load(a.model)
+    if not a.no_capabilities and a.format == "terminal" and not a.out:
+        # Before the run, not after it: the declaration is the part the author
+        # controls, and DECLARED_ABSENT on six probes is a surprise worth having
+        # while there is still time to fix the declaration.
+        print(capability_report(model, a.model).to_terminal())
+        print()
+    card = check(model, seed=a.seed, repeats=a.repeats, n_paths=a.paths, drift=a.drift)
     text = {
         "terminal": lambda: card.to_terminal(colour=not a.no_colour),
         "json": card.to_json,

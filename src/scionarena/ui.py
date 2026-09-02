@@ -31,6 +31,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from scionarena.demo import run_demo, sections, verdicts
+from scionarena.exposure.loading import ModelLoadError, capability_report, load_model
 from scionarena.instrument.report import CSS, render_body, render_html
 
 __all__ = ["main", "serve", "Jobs"]
@@ -178,6 +179,15 @@ button:disabled {{ opacity:.45; cursor:default; }}
 #bar {{ height:6px; background:#e3e8ee; border-radius:3px; overflow:hidden; margin:14px 0 4px; }}
 #bar div {{ height:100%; width:0; background:#0f4c81; transition:width .2s; }}
 #status {{ font-size:13px; color:#5b6b7c; }}
+#caps {{ margin:12px 0 0; display:flex; flex-wrap:wrap; gap:10px; }}
+#caps .m {{ border:1px solid #e3e8ee; border-radius:6px; padding:9px 12px; font-size:13px;
+  background:#fff; min-width:250px; }}
+#caps .m b {{ display:block; font-size:14px; }}
+#caps .m code {{ font-size:11px; color:#5b6b7c; }}
+#caps .m .yes {{ color:#0a7040; }} #caps .m .no {{ color:#8a6d3b; }}
+#caps .bad {{ border:1px solid #f0c8c4; background:#fdf3f2; color:#b42318;
+  border-radius:6px; padding:9px 12px; font:12px ui-monospace,Consolas,monospace;
+  white-space:pre-wrap; }}
 #err {{ white-space:pre-wrap; font:12px ui-monospace,Consolas,monospace; color:#b42318; }}
 </style></head><body>
 <h1>scionarena</h1>
@@ -191,6 +201,9 @@ by construction. Red is the greedy model, blue the stochastic one.
 </div>
 
 <form class='run' id='form'>
+  <div style='flex:1 1 340px'><label>models &mdash; a built-in name, my.module:MyModel,
+       or ./my_model.py:MyModel</label>
+       <input name='models' value='minrtt,reference' style='width:100%'></div>
   <div><label>tier</label><select name='tier'>{tiers}</select></div>
   <div><label>concurrent scopes</label><input name='scopes' type='number' min='1' value='8'></div>
   <div><label>decision rounds</label><input name='cycles' type='number' min='8' value='240'></div>
@@ -207,6 +220,7 @@ by construction. Red is the greedy model, blue the stochastic one.
   <button data-p='40,240,8,dev'>dev, 40 scopes, +8 s model</button>
   <button data-p='100,120,0,realistic'>realistic, 100 scopes</button>
 </div>
+<div id='caps'></div>
 <div id='bar'><div></div></div>
 <div id='status'>idle</div>
 <div id='err'></div>
@@ -258,6 +272,30 @@ async function poll() {{
 }}
 
 $('[name=tier]').onchange = e => {{ $('#status').textContent = 'expect ' + hints[e.target.value]; }};
+
+const esc = t => String(t).replace(/[&<>]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));
+
+function capCard(r) {{
+  const yes = r.tested.length ? r.tested.join(' ') : 'none';
+  const no = r.declared_absent.length ? r.declared_absent.join(' ') : 'none';
+  return `<div class='m'><b>${{esc(r.name)}} v${{esc(r.version)}}</b>
+    <code>${{esc(r.resolved)}}</code>
+    <div class='yes'>tested: ${{esc(yes)}}</div>
+    <div class='no'>declared absent: ${{esc(no)}}</div></div>`;
+}}
+
+// What the model says about itself, before anything runs. A declaration is the
+// part the author controls, so it is worth seeing while it can still be changed.
+async function showCaps() {{
+  const specs = $('[name=models]').value.split(',').map(s => s.trim()).filter(Boolean);
+  const cards = await Promise.all(specs.map(async s => {{
+    const r = await (await fetch('/api/model?spec=' + encodeURIComponent(s))).json();
+    return r.error ? `<div class='bad'>${{esc(r.error)}}</div>` : capCard(r);
+  }}));
+  $('#caps').innerHTML = cards.join('');
+}}
+$('[name=models]').onchange = showCaps;
+showCaps();
 </script></body></html>
 """
 
@@ -286,6 +324,10 @@ def _params(raw: dict[str, Any]) -> dict[str, Any]:
     models = raw.get("models") or ["minrtt", "reference"]
     if isinstance(models, str):
         models = [m.strip() for m in models.split(",") if m.strip()]
+    if not 1 <= len(models) <= 6:
+        raise ValueError(f"give between 1 and 6 models, not {len(models)}")
+    for spec in models:  # fail here, with a sentence, rather than on the worker
+        load_model(spec)
     return {
         "tier": tier,
         "scopes": max(1, min(int(raw.get("scopes", 8)), 2000)),
@@ -312,6 +354,13 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path)
         if route.path in ("/", "/index.html"):
             return self._send(200, "text/html; charset=utf-8", _page())
+        if route.path == "/api/model":
+            spec = (parse_qs(route.query).get("spec") or [""])[0]
+            try:
+                report = capability_report(load_model(spec), spec)
+            except ModelLoadError as exc:
+                return self._json(200, {"error": str(exc)})
+            return self._json(200, report.to_dict())
         if route.path == "/api/status":
             job = self._job(route.query)
             return None if job is None else self._json(200, job.status())
@@ -344,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             raw = json.loads(self.rfile.read(length) or b"{}")
             params = _params(raw)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, ModelLoadError) as exc:
             return self._json(400, {"error": str(exc)})
         return self._json(200, self.jobs.start(params).status())
 

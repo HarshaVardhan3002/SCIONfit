@@ -40,6 +40,22 @@ scionarena conformance compare              # every reference model, side by sid
 scionfit check my.module:MyModel --format markdown --out report.md
 ```
 
+Your own model is named by an import path, and every command that takes a model takes one:
+a built-in name, `mypackage.mymodule:MyModel` once your code is installed, or
+`./my_model.py:MyModel` if you have a single file and have packaged nothing.
+
+```bash
+scionarena models                           # the built-in names, and what they resolve to
+scionarena models ./my_model.py:MyModel     # does it load, and what will it be tested on?
+scionarena demo --models "./my_model.py:MyModel,reference"
+```
+
+`scionarena models` builds no scenario and runs no round, so a wrong import path or a
+missing method costs a second rather than the length of a run. It prints which probes your
+`Capabilities` declaration turns on and which it records as `DECLARED_ABSENT`. Loading runs
+your module in this process, exactly as `import` would: do not load a spec you do not
+trust. `docs/MODELS.md` has a fifteen-line worked example.
+
 The closed loop, and the result it exists to produce:
 
 ```bash

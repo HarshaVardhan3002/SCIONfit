@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from scionarena.core.scenario import Scenario
+from scionarena.exposure.loading import BUILTIN_MODELS, load_model
 from scionarena.exposure.loop import LoopConfig, LoopResult, busiest_scopes, run_loop
 from scionarena.instrument.report import render_html, report_card, verdict_state
-from scionarena.reference.models import REFERENCE_MODELS
 
-__all__ = ["main", "run_demo", "sections", "verdicts"]
+__all__ = ["labels_for", "main", "run_demo", "sections", "verdicts"]
 
 #: The ratios M3 is scored against, per ADR 0010. Ratios between two models on
 #: one scenario, not absolute thresholds: fast-band amplitude is in the units of
@@ -71,10 +71,18 @@ def run_demo(
 ) -> list[LoopResult]:
     """Every run shares one scenario, one seed and one set of scopes.
 
+    ``models`` are specs in the sense of ADR 0013: a built-in name, an import
+    path, or a path to a file. Nothing here knows which, so an outside model is
+    compared against a reference model by the same code that compares two
+    reference models.
+
     ``progress`` is called with ``(what_is_running, rounds_done, rounds_total)``
     and anything it raises propagates out of here unchanged; ``ui`` cancels a
     run that way.
     """
+    loaded = [load_model(spec) for spec in models]
+    labels = labels_for(models, loaded)
+
     scenario = Scenario.for_tier(tier, seed=seed)
     picked = busiest_scopes(scenario.build(), scopes)
     config = LoopConfig(cycles=cycles, n_hosts=hosts, seed=seed)
@@ -85,28 +93,43 @@ def run_demo(
         return lambda done, total: progress(label, done, total)
 
     results = []
-    for name in models:
-        results.append(
-            run_loop(
-                REFERENCE_MODELS[name](),
-                scenario,
-                picked,
-                config=config,
-                on_cycle=watcher(name),
-            )
-        )
+    for label, model in zip(labels, loaded, strict=True):
+        result = run_loop(model, scenario, picked, config=config, on_cycle=watcher(label))
+        result.model = label
+        results.append(result)
     if slow_s > 0.0:
         slow = LoopConfig(cycles=cycles, n_hosts=hosts, seed=seed, extra_latency_s=slow_s)
         result = run_loop(
-            REFERENCE_MODELS[models[0]](),
+            # A second instance, not the one that just ran: these models are
+            # stateful and the comparison is only controlled if both start fresh.
+            load_model(models[0]),
             scenario,
             picked,
             config=slow,
-            on_cycle=watcher(f"{models[0]} +{slow_s:g}s"),
+            on_cycle=watcher(f"{labels[0]} +{slow_s:g}s"),
         )
-        result.model = f"{result.model} +{slow_s:g}s latency"
+        result.model = f"{labels[0]} +{slow_s:g}s latency"
         results.append(result)
     return results
+
+
+def labels_for(specs: Sequence[str], models: Sequence[Any]) -> list[str]:
+    """What each run is called in the figure.
+
+    A model's declared name, except when two models declare the same one -- the
+    figure keys its series on this, so a collision silently draws two runs as one
+    line. Two builds of the same model under different specs is the normal way to
+    hit it, and it is exactly the comparison somebody would want to make.
+    """
+    names = [
+        getattr(model.capabilities, "name", "") or spec
+        for spec, model in zip(specs, models, strict=True)
+    ]
+    seen = [names.count(name) for name in names]
+    return [
+        f"{name} [{spec}]" if count > 1 else name
+        for name, count, spec in zip(names, seen, specs, strict=True)
+    ]
 
 
 def verdicts(results: Sequence[LoopResult]) -> list[dict[str, Any]]:
@@ -275,7 +298,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hosts", type=int, default=200)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--slow", type=float, default=0.0, metavar="SECONDS")
-    parser.add_argument("--models", default="minrtt,reference")
+    parser.add_argument(
+        "--models",
+        default="minrtt,reference",
+        help=f"comma-separated specs: {' | '.join(sorted(BUILTIN_MODELS))}, "
+        f"'my.module:MyModel', or './my_model.py:MyModel'",
+    )
     parser.add_argument("--out", default="demo", metavar="DIR")
     args = parser.parse_args(argv)
 
