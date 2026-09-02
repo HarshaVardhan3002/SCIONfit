@@ -21,6 +21,7 @@ from scionarena.core.segments import (
     SEG_CORE,
     SEG_UP,
     BeaconPolicy,
+    FilterPolicy,
     Segment,
     SegmentStore,
     structural_hash,
@@ -444,6 +445,103 @@ def test_filtering_survives_rebeaconing(store: SegmentStore):
     store.filter_segments([store._up_by_as[3][0]])
     store.rebeacon()
     assert store.filtered == frozenset({store._up_by_as[3][0]})
+
+
+def test_every_resigning_reaches_the_feed_not_just_the_last_round(store: SegmentStore):
+    """C3. ``_resign_all`` assigned the round's segment ids over the pending
+    list instead of extending it, so a reader that drained less often than the
+    world re-signed saw only the most recent round. Measured at 81% of
+    re-signings lost, and the corrected 5 s beacon interval multiplies the
+    number of rounds between two drains by sixty.
+
+    Counted against the generation counters, which cannot be fooled by the
+    accumulator itself: a segment's ``generation`` increments once per
+    re-signing whatever the feed does.
+    """
+    before = sum(seg.generation for _, seg in store.iter_segments())
+    for _ in range(4):
+        store.rebeacon()
+
+    drained = store.drain_resigned()
+    after = sum(seg.generation for _, seg in store.iter_segments())
+
+    assert len(drained) == after - before == 4 * store.n_segments
+    assert store.drain_resigned() == [], "draining twice reported the same events twice"
+
+
+def test_a_policy_filter_catches_core_segments_discovered_later(store: SegmentStore):
+    """C1. The filter used to be a set of segment ids snapshotted when the
+    event fired, and core segments are discovered lazily on first ask -- so
+    every core segment composed after the event carried a fresh id that was
+    never in the set, and roughly eleven thousand paths at the ``dev`` tier
+    went on traversing an AS the scenario had filtered. Nothing reported it:
+    ``filtered`` said the filter was applied, and it was, to the segments that
+    happened to exist at the time.
+
+    Composing *before* installing the policy would hide the bug, because the
+    core cache would already be warm. The whole point is the segment that does
+    not exist yet.
+    """
+    pairs = sample_pairs(store.topology, n=60, seed=11)
+    victim = max(
+        range(store.topology.n_ases),
+        key=lambda a: sum(
+            any(a in p.ases for p in store.paths_for(src, dst)) for src, dst in pairs
+        ),
+    )
+    fresh = SegmentStore.for_tier(store.topology, DEV, seed=0)
+    fresh.apply_filter_policy(FilterPolicy(as_=victim))
+
+    leaked = [
+        (src, dst, p) for src, dst in pairs for p in fresh.paths_for(src, dst) if victim in p.ases
+    ]
+    assert not leaked, (
+        f"{len(leaked)} paths still traverse filtered AS {victim}; "
+        f"first is {leaked[0][0]}->{leaked[0][1]} via {leaked[0][2].ases}"
+    )
+
+
+def test_a_partial_policy_filter_decides_per_segment_not_per_arrival(store: SegmentStore):
+    """C1, the ``fraction`` half. A partial filter drew a random subset of the
+    segments that existed when it fired, so which segments it hid depended on
+    which had been composed first. Keyed on the structural id instead, the
+    decision is a property of the segment, so two stores that discover the same
+    segments in a different order hide the same ones.
+    """
+    pairs = sample_pairs(store.topology, n=30, seed=5)
+    policy = FilterPolicy.seeded(3, 0.5, seed=7, at_s=30.0)
+
+    eager = SegmentStore.for_tier(store.topology, DEV, seed=0)
+    eager.apply_filter_policy(policy)
+    for src, dst in pairs:
+        eager.paths_for(src, dst)
+
+    lazy = SegmentStore.for_tier(store.topology, DEV, seed=0)
+    for src, dst in reversed(pairs):
+        lazy.paths_for(src, dst)
+    lazy.apply_filter_policy(policy)
+
+    def hidden(store_: SegmentStore) -> set[int]:
+        return {store_.segment(i).structural_id for i in store_.filtered}
+
+    assert hidden(eager) == hidden(lazy)
+    assert hidden(eager), "a 50% filter on a well-connected AS hid nothing"
+
+
+def test_unfiltering_everything_also_lifts_the_policy(store: SegmentStore):
+    """Otherwise the policy keeps hiding segments composed after the unfilter,
+    and a scenario's ``as_policy_unfilter`` only half restores the world."""
+    src, dst = next(
+        (a, b) for a, b in sample_pairs(store.topology) if len(store.paths_for(a, b)) > 1
+    )
+    victim = store.paths_for(src, dst)[0].ases[1]
+
+    fresh = SegmentStore.for_tier(store.topology, DEV, seed=0)
+    fresh.apply_filter_policy(FilterPolicy(as_=victim))
+    fresh.unfilter_segments()
+
+    assert fresh.filter_policies == ()
+    assert any(victim in p.ases for p in fresh.paths_for(src, dst))
 
 
 # --------------------------------------------------------------------------

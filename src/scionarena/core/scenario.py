@@ -40,6 +40,7 @@ from scionarena.core.linkstate import BackgroundParams, LinkParams, LinkState
 from scionarena.core.segments import (
     IDENTITY_POLICIES,
     BeaconPolicy,
+    FilterPolicy,
     Path,
     SegmentStore,
 )
@@ -346,6 +347,13 @@ class Substrate:
         self.generation = 0
         self._surges: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._next_surge = 0
+        #: Load a probe is putting on the network *while it runs*. Held here
+        #: rather than added straight to the link state, because ``_apply_load``
+        #: rebuilds demand from scratch and would otherwise wipe an in-flight
+        #: probe's contribution -- after which releasing it subtracts from a
+        #: baseline that never carried it. See :meth:`hold_probe_load`.
+        self._probe_load: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        self._next_probe_load = 0
         #: Advisories that have reached the hosts. Published-but-not-yet-applied
         #: is the difference between this and what the session logged, and that
         #: difference is decision latency.
@@ -491,20 +499,19 @@ class Substrate:
         becomes unavailable without anything physical happening, so a model
         that reasons about availability as if it were connectivity is wrong in
         a way no link metric reveals.
+
+        Installed as a standing policy rather than applied to the segments that
+        exist right now, because core segments are discovered lazily and the
+        ones composed after this event have to be caught too.
         """
-        as_ = int(event.get("as_"))
-        fraction = float(event.get("fraction", 1.0))
-        seg_ids = sorted(
-            seg_id
-            for seg_id, segment in self.segments.iter_segments()
-            if as_ in segment.ases and segment.ifaces
+        self.segments.apply_filter_policy(
+            FilterPolicy.seeded(
+                int(event.get("as_")),
+                float(event.get("fraction", 1.0)),
+                seed=self.scenario.seed,
+                at_s=event.at_s,
+            )
         )
-        if fraction < 1.0 and seg_ids:
-            rng = np.random.default_rng([self.scenario.seed, as_, int(event.at_s)])
-            keep = max(1, int(round(len(seg_ids) * fraction)))
-            chosen = rng.choice(np.asarray(seg_ids), size=keep, replace=False)
-            seg_ids = sorted(int(s) for s in chosen)
-        self.segments.filter_segments(seg_ids)
 
     def _on_policy_unfilter(self, event: Event) -> None:
         self.segments.unfilter_segments()
@@ -567,6 +574,7 @@ class Substrate:
         for src, dst, params in scopes:
             self.add_scope(src, dst, params=params)
         self._surges.clear()
+        self._probe_load.clear()
         self.generation += 1
 
     # ------------------------------------------------------------------ steps
@@ -632,16 +640,53 @@ class Substrate:
         grid = self.scenario.step_s
         return abs(t / grid - round(t / grid)) < 1e-9
 
+    def hold_probe_load(self, ifaces: Sequence[int] | np.ndarray, mbps: float) -> int:
+        """Put a probe's own traffic on the network until it is released.
+
+        A bandwidth test measures a link it is itself loading, and that load has
+        to survive :meth:`_apply_load` rebuilding demand underneath it. Adding it
+        to the link state directly does not: a grid tick inside the probe's two
+        seconds wipes the contribution, and the matching subtraction then lands
+        on a baseline that never carried it, leaving the interface at minus the
+        probe's own rate until the next tick. See
+        ``tests/test_exposure.py::test_a_bandwidth_probe_straddling_a_grid_tick_leaves_no_negative_load``.
+        """
+        handle = self._next_probe_load
+        self._next_probe_load += 1
+        which = np.asarray(ifaces, dtype=np.int64)
+        rate = np.full(which.size, float(mbps), dtype=np.float64)
+        self._probe_load[handle] = (which, rate)
+        self.links.add_demand(which, rate)
+        return handle
+
+    def release_probe_load(self, handle: int) -> None:
+        """Take a probe's traffic back off. Safe whether or not a grid tick
+        rebuilt demand while it was in flight, because a rebuild includes it.
+
+        A no-op if a topology change dropped the hold while the probe was in
+        flight: the interface ids it was placed on no longer mean what they
+        meant, and subtracting from whatever now wears those numbers would be
+        worse than leaving it.
+        """
+        held = self._probe_load.pop(handle, None)
+        if held is None:
+            return
+        which, rate = held
+        self.links.add_demand(which, -rate)
+
     def _apply_load(self, t: float, dt_s: float) -> None:
-        """Hosts offer, surges add, and the total is written in one go.
+        """Hosts offer, surges and in-flight probes add, and the total is
+        written in one go.
 
         Recomputed from scratch rather than adjusted, so nothing accumulates a
         rounding error over a 3,600-second run and reports it as a finding.
         """
-        if not self.hosts.scopes and not self._surges:
+        if not self.hosts.scopes and not self._surges and not self._probe_load:
             return
         total = self.hosts.step(t, dt_s, self.links).copy()
         for ifaces, mbps in self._surges.values():
+            np.add.at(total, ifaces, mbps)
+        for ifaces, mbps in self._probe_load.values():
             np.add.at(total, ifaces, mbps)
         self.links.set_all_demand(total)
 

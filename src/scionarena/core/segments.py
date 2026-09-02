@@ -34,6 +34,7 @@ them.
 from __future__ import annotations
 
 import hashlib
+import struct
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -50,6 +51,7 @@ __all__ = [
     "Path",
     "SegmentStore",
     "BeaconPolicy",
+    "FilterPolicy",
     "IdentityPolicy",
     "SEG_UP",
     "SEG_CORE",
@@ -90,6 +92,22 @@ def _material_hash(structural_id: int, generation: int, signature_id: int) -> in
         person=b"scion-sg",
     )
     return int.from_bytes(digest.digest(), "big")
+
+
+def _filter_draw(salt: int, structural_id: int) -> float:
+    """A stable uniform draw in [0, 1) for one segment under one filter policy.
+
+    Keyed on the *structural* id, so a segment keeps its decision when it is
+    re-signed, and a segment composed later gets the decision it would have got
+    had it existed when the policy was installed. Keying on the segment id
+    would give neither property.
+    """
+    digest = hashlib.blake2b(
+        salt.to_bytes(8, "big") + structural_id.to_bytes(8, "big"),
+        digest_size=8,
+        person=b"scion-fd",
+    )
+    return int.from_bytes(digest.digest(), "big") / 2.0**64
 
 
 @dataclass(frozen=True)
@@ -166,6 +184,54 @@ class Segment:
             ases=tuple(reversed(self.ases)),
             structural_id=structural_hash(tuple(reversed(self.ifaces))),
         )
+
+
+@dataclass(frozen=True)
+class FilterPolicy:
+    """An AS declining to propagate the segments that traverse it.
+
+    Held as a **rule**, not as the set of segments it matched when it was
+    installed. Path composition is lazy -- core segments between a pair of core
+    ASes are discovered on first ask -- so a policy stored as a set of segment
+    ids silently stops applying to everything composed afterwards. That is how
+    roughly eleven thousand paths went on traversing a "filtered" AS at the
+    ``dev`` tier while :meth:`SegmentStore.filtered` reported the filter as
+    applied. See
+    ``tests/test_segments.py::test_a_policy_filter_catches_core_segments_discovered_later``.
+
+    ``fraction`` below 1 hides that share of the AS's segments rather than all
+    of them, decided per segment by a stable draw so that the answer does not
+    depend on which segments happened to exist first.
+    """
+
+    as_: int
+    fraction: float = 1.0
+    #: salt for the partial draw; see :meth:`seeded`
+    salt: int = 0
+
+    @classmethod
+    def seeded(cls, as_: int, fraction: float, *, seed: int, at_s: float) -> FilterPolicy:
+        """A policy whose partial draw is reproducible from the run's seed.
+
+        Packed big-endian rather than through :meth:`numpy.ndarray.tobytes`,
+        because native byte order would make the draw host-dependent and
+        invariant 4 does not allow that.
+        """
+        digest = hashlib.blake2b(
+            int(seed).to_bytes(8, "big", signed=True)
+            + int(as_).to_bytes(8, "big", signed=True)
+            + struct.pack(">d", float(at_s)),
+            digest_size=8,
+            person=b"scion-fs",
+        )
+        return cls(as_=as_, fraction=fraction, salt=int.from_bytes(digest.digest(), "big"))
+
+    def matches(self, segment: Segment) -> bool:
+        if not segment.ifaces or self.as_ not in segment.ases:
+            return False
+        if self.fraction >= 1.0:
+            return True
+        return _filter_draw(self.salt, segment.structural_id) < self.fraction
 
 
 @dataclass(frozen=True)
@@ -256,8 +322,11 @@ class SegmentStore:
         self._path_cache_size = path_cache_size
         #: segments hidden by AS policy filtering. Not a topology change.
         self._filtered: set[int] = set()
-        #: segment ids touched by the most recent re-beaconing round
-        self.last_resigned: list[int] = []
+        #: the policies that produced them, kept so that segments composed later
+        #: are tested too. ``_filtered`` alone cannot do that -- see FilterPolicy.
+        self._policies: list[FilterPolicy] = []
+        #: segment ids re-signed since the beacon feed last drained
+        self._resigned: list[int] = []
         #: (as, role) -> ((neighbour, local iface), ...). The CSR arrays are the
         #: right shape for whole-graph work and the wrong shape for walking one
         #: AS at a time in Python; slicing them per hop cost more than the search
@@ -331,6 +400,12 @@ class SegmentStore:
         self._due.append(due)
         self._due_arr = None
         self._next_due = min(self._next_due, due)
+        # A segment discovered after a policy was installed is still subject to
+        # it. Tested here, once, so the hot read path stays a set lookup.
+        if self._policies:
+            segment = self._segments[seg_id]
+            if any(policy.matches(segment) for policy in self._policies):
+                self._filtered.add(seg_id)
         return seg_id
 
     def _new_signature(self) -> int:
@@ -669,10 +744,17 @@ class SegmentStore:
         return len(targets)
 
     def _resign_all(self, seg_ids: Sequence[int] | NDArray[np.intp], t: float) -> None:
-        #: Which segments the last round touched. The beacon feed needs to know
-        #: *which*, not how many, and rescanning every segment to find out would
-        #: make a cheap step expensive at the realistic tier.
-        self.last_resigned = [int(i) for i in seg_ids]
+        #: Which segments have been re-signed since the feed last drained. The
+        #: beacon feed needs to know *which*, not how many, and rescanning every
+        #: segment to find out would make a cheap step expensive at the
+        #: realistic tier.
+        #:
+        #: Accumulated, not assigned. Assigning kept only the most recent round,
+        #: so every resigning between two drains was lost -- measured at 81% of
+        #: them -- and a reader stepping the world a second at a time saw one
+        #: tick's worth of a feed it believed was complete. At the corrected 5 s
+        #: beacon interval there are sixty times as many rounds to lose.
+        self._resigned.extend(int(i) for i in seg_ids)
         for seg_id in seg_ids:
             seg = self._segments[seg_id]
             self._segments[seg_id] = replace(
@@ -710,16 +792,60 @@ class SegmentStore:
         self._filtered.update(int(i) for i in seg_ids)
         self._invalidate()
 
+    def apply_filter_policy(self, policy: FilterPolicy) -> int:
+        """Install an AS policy and hide everything already registered that it
+        matches. Returns how many that was.
+
+        Segments composed *after* this call are tested as they are registered,
+        which is the whole reason a policy is kept rather than expanded into a
+        set of ids here.
+        """
+        self._policies.append(policy)
+        hidden = {seg_id for seg_id, seg in enumerate(self._segments) if policy.matches(seg)}
+        self._filtered.update(hidden)
+        self._invalidate()
+        return len(hidden)
+
     def unfilter_segments(self, seg_ids: Sequence[int] | None = None) -> None:
+        """Restore segments. With no argument, restores everything **and**
+        removes the policies, so later composition is unfiltered again.
+
+        Naming specific ids leaves the policies in place: it lifts the hiding of
+        those segments, not the rule that produced it, and a segment composed
+        later that matches a policy is still hidden.
+        """
         if seg_ids is None:
             self._filtered.clear()
+            self._policies.clear()
         else:
             self._filtered.difference_update(int(i) for i in seg_ids)
         self._invalidate()
 
+    # ------------------------------------------------------------ beacon feed
+
+    def drain_resigned(self) -> list[int]:
+        """Every segment re-signed since this was last called, and clear.
+
+        A drain rather than a readable attribute, because the reader owning the
+        clear is the only arrangement in which nothing is silently dropped: an
+        attribute that the store overwrites each round loses whatever the reader
+        did not collect in time, which is exactly what it used to do.
+        """
+        drained, self._resigned = self._resigned, []
+        return drained
+
+    @property
+    def resigned_pending(self) -> int:
+        """How many re-signings are waiting to be drained. Instrumentation only."""
+        return len(self._resigned)
+
     @property
     def filtered(self) -> frozenset[int]:
         return frozenset(self._filtered)
+
+    @property
+    def filter_policies(self) -> tuple[FilterPolicy, ...]:
+        return tuple(self._policies)
 
     # -------------------------------------------------------------- internals
 

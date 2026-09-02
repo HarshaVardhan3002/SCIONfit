@@ -581,13 +581,11 @@ class Session:
         # A bandwidth test is traffic. It loads the path it measures, for as
         # long as it runs, and then the load goes away. See ADR 0008.
         egress = [int(i) for i in path.ifaces[::2]]
-        for iface in egress:
-            self._world.links.add_demand(iface, BWTEST_LOAD_MBPS)
+        held = self._world.hold_probe_load(egress, BWTEST_LOAD_MBPS)
         self._advance(BWTEST_S)
         self._prepaid_s += BWTEST_S
         loaded = self._world.links.path_metrics(path.ifaces)
-        for iface in egress:
-            self._world.links.add_demand(iface, -BWTEST_LOAD_MBPS)
+        self._world.release_probe_load(held)
         achieved = min(BWTEST_LOAD_MBPS, loaded.bandwidth_mbps + BWTEST_LOAD_MBPS)
         return {
             "throughput_mbps": achieved,
@@ -734,11 +732,8 @@ class Session:
         return any(s.stream == stream for s in self.subscriptions.values())
 
     def _harvest_beacons(self) -> None:
-        resigned = self._world.segments.last_resigned
-        if not resigned:
-            return
-        self._world.segments.last_resigned = []
-        if not self._subscribed("beacons"):
+        resigned = self._world.segments.drain_resigned()
+        if not resigned or not self._subscribed("beacons"):
             return
         topo = self._world.topology
         for seg_id in resigned:

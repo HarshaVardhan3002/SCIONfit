@@ -13,11 +13,12 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from scionarena.core.scenario import Scenario, TimelineEvent, TopologySpec
 from scionarena.exposure import Budget, Cost, Session, tool_definitions
-from scionarena.exposure.session import drive_episode, run_episode
+from scionarena.exposure.session import _hex, drive_episode, run_episode
 from scionarena.exposure.tools import PROBE_KINDS, TOOLS, ToolSpec
 from scionarena.reference import REFERENCE_MODELS, BudgetedProber
 
@@ -566,6 +567,61 @@ def test_a_probe_can_time_out():
     assert "probe_timeout" in errors or any(
         None in r.data.get("samples_ms", []) for r in outcomes if r.ok
     ), "a saturated, degraded path lost nothing at all"
+
+
+def test_a_bandwidth_probe_straddling_a_grid_tick_leaves_no_negative_load():
+    """C2. The probe used to add its own load straight to the link state, run
+    for two seconds, then subtract it. A host grid tick inside those two seconds
+    rebuilds demand from scratch and drops the contribution, so the subtraction
+    landed on a baseline that never carried it and left the interface at minus
+    the probe's own rate until the next tick.
+
+    Nothing reported it. The probe returned a plausible number, the model was
+    charged correctly, and the link sat at negative offered load -- so whichever
+    model probed most was measuring a network its own instrumentation had
+    damaged. ``step_s`` is 1.0 and ``BWTEST_S`` is 2.0, so every bandwidth probe
+    in a closed-loop run crosses at least one tick.
+    """
+    s = session()
+    world = s._world
+    topo = world.topology
+    hsrc, hdst = busiest_scope(s)
+    world.add_scope(topo.as_index(hsrc), topo.as_index(hdst))
+    world.step(1.0)
+
+    # Probe a path the hosts are *not* using, so the damage is not masked by
+    # traffic that happens to be larger than it. On a busy interface the same
+    # bug understates the load by the probe's rate instead of going negative,
+    # which is just as wrong and much harder to see.
+    busy = set(np.nonzero(world.links.demand_mbps)[0].tolist())
+    idle = next(
+        (
+            (a, b, path, egress)
+            for a in range(topo.n_ases)
+            for b in range(topo.n_ases)
+            if a != b
+            for path in world.paths_for(a, b)
+            for egress in [[int(i) for i in path.ifaces[::2]]]
+            if egress and not busy.intersection(egress)
+        ),
+        None,
+    )
+    if idle is None:
+        pytest.skip("every path in this fixture carries host load")
+    a, b, path, egress = idle
+    s.call("query_paths", src=topo.as_name(a), dst=topo.as_name(b))
+    path_id = _hex(path.path_id(world.identity_policy))
+
+    before = world.links.demand_mbps[egress].copy()
+    result = s.call("probe_path", path_id=path_id, kind="bandwidth")
+    assert result.ok, result.message
+
+    after = world.links.demand_mbps[egress]
+    assert after == pytest.approx(before), (
+        f"the probe left {after} on interfaces that carried {before} before it ran"
+    )
+    assert float(world.links.demand_mbps.min()) >= -1e-9, "an interface is offering negative load"
+    assert not world._probe_load, "the probe's hold outlived the probe"
 
 
 def test_a_filtered_path_stops_being_probeable():
