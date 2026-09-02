@@ -481,6 +481,39 @@ What is missing, and lands with this phase:
   comparison in Phase 7 needs, and adding it after there are results makes those results
   ungroupable. See Phase 7, "architecture, then variant".
 
+### What has landed
+
+The three things that could not be retrofitted are in, because after results exist none of
+them can be added to those results:
+
+- **The architecture tag** (`Capabilities.architecture`), free-form, recorded per cell,
+  grouping the report's new architecture section above the model tables. Each row is the
+  tag's *best* variant rather than its average, the variant count prints beside it, and
+  under three variants the row is marked thin. The shipped models are tagged: `persistence`,
+  `ewma` (EMAOracle and LatestSample, which is EWMA at alpha=1), `robust_filter`, `static`,
+  `heuristic`, `stochastic`.
+- **The drive** (`LoopConfig.drive`, `SweepSpec.drive`), and with it the discovery that made
+  it urgent: `run_loop` — the loop every `bench` cell goes through — **never called `act`**.
+  A model declaring `uses_tools` was silently scored on the fixed cycle. `drive="both"` runs
+  the parity pair; `cell_seed` no longer derives from `cell_id`, so the pair shares one world
+  while writing two files. Making the path reachable also exposed that no tool existed for a
+  model to learn which scopes it serves, so `list_scopes` is the sixth tool.
+- **`scionarena adapt <spec>`** and `examples/adaptor_template.py` — the pre-flight and the
+  worked adaptor it checks. Three states, not two: the third is *unchecked*, and it exists
+  because a cheap check that guesses "pass" is worse than no check.
+
+First parity numbers, smoke tier, one repeat, `BudgetedProber` both ways over one world:
+regret ratio 1.137 → 1.123 with no defectors, 1.677 → 2.006 at 10 % defectors, 4.742 → 5.309
+at 30 %. Its own probe policy is **no better than our round robin, and degrades faster under
+defection**. Thin, and marked thin. But it is the first measurement of what choosing your own
+probes is worth, and that number is what decides whether an agentic architecture earns its
+latency.
+
+The pre-flight found two false declarations within minutes of existing, both on shipped code:
+`CapacityProportional` claimed `stateful` by inheriting a dataclass default while its own
+docstring says it is deliberately blind, and the worked adaptor claimed `emits_assignment`
+while returning a softmax concentrated enough to be a ranking.
+
 ### The comparison is confounded, and the fix is one parameter
 
 `ToolUsingModel` inherits `PathModel`, so an agentic model implements the four fixed-cycle

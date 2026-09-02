@@ -229,6 +229,9 @@ src/scionarena/
     streams.py       beacon / telemetry / path-server feeds
     budget.py        probe, wall-clock, compute budgets
     session.py       one model's view of one episode
+    loading.py       a model enters as an import path      (ADR 0013)
+    loop.py          the closed loop, fixed or agentic     (ADR 0019)
+    precheck.py      the thirty-second check, no substrate (ADR 0020)
   backends/        tier adapters behind one interface
     replay.py  analytical.py  dqnsim.py  testbed.py
   instrument/
