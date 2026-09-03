@@ -66,6 +66,7 @@ BUILTIN_MODELS: Final[Mapping[str, str]] = {
     "prober": "scionarena.reference.agents:BudgetedProber",
     "gbdt": "scionarena.reference.trees:GradientBoosted",
     "layered": "scionarena.reference.layered:LayeredRanker",
+    "llm": "scionarena.reference.llm:LanguageModelAgent",
 }
 
 #: What may follow the colon: a name, or a dotted path to a nested class.

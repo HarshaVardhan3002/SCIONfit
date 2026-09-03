@@ -196,4 +196,6 @@ class BudgetedProber(ReferenceStochastic):
             self.observe(observations, session.view())
 
 
-TOOL_USING_MODELS = {"prober": BudgetedProber}
+from .llm import LanguageModelAgent  # noqa: E402
+
+TOOL_USING_MODELS = {"prober": BudgetedProber, "llm": LanguageModelAgent}

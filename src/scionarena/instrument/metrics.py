@@ -92,6 +92,11 @@ class MetricInput:
     wall_clock_s: float = 0.0
     session: Mapping[str, Any] = field(default_factory=dict)
     hosts: Mapping[str, Any] = field(default_factory=dict)
+    #: What the model said about itself at the end of the run, if it said
+    #: anything (ADR 0024). The only place the harness learns what a model
+    #: *kept*, as against what the harness produced -- and the difference
+    #: between those two is the whole context-management question.
+    model: Mapping[str, float] = field(default_factory=dict)
     #: ``(simulated seconds, kind)`` for every event the scenario scheduled, as
     #: the substrate actually installed them rather than as they were written.
     #: Empty for a run with no bad day, which is why every recovery metric
@@ -861,3 +866,52 @@ def recovered_to(data: MetricInput) -> float | None:
 def n_faults(data: MetricInput) -> float | None:
     """Scheduled events this run had. Zero is a steady cell, not a missing figure."""
     return float(len([1 for _, kind in data.events if kind not in _NOT_A_FAULT]))
+
+
+# --------------------------------------------------------------------------
+# what the model kept (ADR 0024)
+#
+# Invariant 1 says the harness never summarises: the model gets the raw log and
+# decides what to retain. For a gradient-boosted model that is a design detail;
+# for a language model it is the experiment, because the log outgrows any window
+# inside an episode and what is thrown away decides what can still be seen.
+#
+# All three read ``MetricInput.model``, which is empty for a model that does not
+# implement ``report_state``. ``None`` then, not zero: a model that kept nothing
+# and a model that never said are different, and only the first is a score.
+
+
+def _said(data: MetricInput, key: str) -> float | None:
+    value = data.model.get(key)
+    return None if value is None else float(value)
+
+
+@metric("context_bytes", "operational")
+def context_bytes(data: MetricInput) -> float | None:
+    """Bytes of raw log the model was still carrying when the episode ended."""
+    return _said(data, "context_bytes")
+
+
+@metric("context_retained", "operational", higher_is_better=None)
+def context_retained(data: MetricInput) -> float | None:
+    """Kept over offered. Neither direction is better, which is why it is signed.
+
+    A model retaining everything has not solved context management, it has
+    avoided it, and one retaining nothing is answering from this turn alone.
+    What the number is for is reading beside the accuracy family: the question
+    is what a given retention bought.
+    """
+    return _said(data, "context_retained")
+
+
+@metric("context_evictions", "operational")
+def context_evictions(data: MetricInput) -> float | None:
+    """Records the model dropped, by its own policy or by its own budget."""
+    return _said(data, "context_evictions")
+
+
+@metric("model_calls", "operational", higher_is_better=True, support=True)
+def model_calls(data: MetricInput) -> float | None:
+    """Decisions the model's own transport was asked for. The denominator under
+    any per-decision cost, and zero for a model that has no transport."""
+    return _said(data, "model_calls")

@@ -206,6 +206,10 @@ class LoopResult:
     #: thing that tells a recovery metric when the bad day started, and read by
     #: nothing the model can reach.
     events: list[tuple[float, str]] = field(default_factory=list)
+    #: What the model said about its own state at the end of the episode, if it
+    #: implements ``report_state`` (ADR 0024). Read once, after the last turn, so
+    #: reading it cannot change the run; empty for a model that says nothing.
+    model_report: dict[str, float] = field(default_factory=dict)
     session_summary: dict[str, Any] = field(default_factory=dict)
     hosts_summary: dict[str, Any] = field(default_factory=dict)
 
@@ -359,6 +363,7 @@ class LoopResult:
             session=dict(self.session_summary),
             hosts=dict(self.hosts_summary),
             events=list(self.events),
+            model=dict(self.model_report),
         )
 
     def metrics(self, *, families: Sequence[str] = ()) -> dict[str, float | None]:
@@ -545,7 +550,35 @@ def run_loop(
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
     result.hosts_summary = world.hosts.summary()
+    result.model_report = _model_report(model)
     return result
+
+
+def _model_report(model: PathModel) -> dict[str, float]:
+    """What the model says about its own state, if it says anything (ADR 0024).
+
+    Optional by ``getattr`` rather than by protocol, because a model that keeps
+    nothing should not have to say so and because the contract is public API
+    after M6. Read once, after the last turn, so that reading it cannot change
+    the run -- and defensive, because a model whose bookkeeping raises must not
+    cost the episode that has already been measured.
+    """
+    report = getattr(model, "report_state", None)
+    if not callable(report):
+        return {}
+    try:
+        stated = report()
+    except Exception:  # noqa: BLE001 -- a model that will not say is not a failed run
+        return {}
+    out: dict[str, float] = {}
+    for key, value in dict(stated).items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number and abs(number) != float("inf"):
+            out[str(key)] = number
+    return out
 
 
 def resolve_drive(model: PathModel, requested: str = "auto") -> str:
