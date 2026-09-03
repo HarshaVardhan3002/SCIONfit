@@ -64,3 +64,33 @@ self-consistency, and passing a model for that would be misleading.
 simulated seconds and checks that the advisory relaxes and reported confidence
 drops. Stale advice stated confidently is worse than no advice, because every
 host acts on the same stale reading at once.
+
+**R11 · Layer discipline.** Holds the static layer exactly fixed, congests only
+the dynamic one, and checks the model's *published ranking* rather than the order
+of its point estimates. That distinction is the design: a latency-class model is
+entitled to nowcast congestion and is not entitled to let the nowcast decide who
+goes first, because ranking on a fifteen-second-old congestion estimate is
+routing on lagged load — everyone moves to the path that was cheapest fifteen
+seconds ago, which makes it the most expensive, and the population swaps again
+next round. Applies only to a model that declares
+`requirement_class="latency"`; empty is `NOT_APPLICABLE`, because a model that
+claims nothing has claimed nothing this can contradict. The probe stages its own
+experiment before grading it — it escalates the congestion until the world's own
+cheapest path has genuinely changed, and returns `NOT_APPLICABLE` rather than a
+pass when nothing short of saturation does.
+
+**R12 · Identity churn hygiene.** Re-signs every path — new identifiers,
+identical interface sequences, identical network — and measures how much of the
+model's prediction survives. **Grades, never blocks.** Q1 resolved that the
+deployed fingerprint hashes the interface sequence alone, so a model that loses
+its memory across a rename carries a hygiene defect rather than failing a
+deployment requirement. It is still worth knowing: such a model discards its
+whole history every refresh cycle while every one of its outputs still looks
+plausible.
+
+**R13 · Calibration under shift.** Measures the empirical coverage of the
+model's own interval, degrades a link, and measures how long coverage takes to
+come back. A fixed-width interval never recovers; an adaptive level does.
+Deliberately *not* tied to the `distributional` flag: a model whose intervals do
+not recover has not lied about being distributional — it is distributional and
+badly calibrated, which is a different and more interesting finding.

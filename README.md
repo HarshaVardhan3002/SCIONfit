@@ -27,6 +27,12 @@ pip install -e ".[dev]"
 
 No required dependencies. Python 3.11+.
 
+Optional extras: `[report]` for the PDF (matplotlib, reportlab), `[trees]` for the
+gradient-boosted reference model (scikit-learn), `[dev]` for the test and lint tooling.
+Nothing in `core/` needs anything beyond numpy, and the language-model adapter uses the
+standard library rather than a vendor SDK -- a benchmark that needed one would carry that
+SDK's version in every result file.
+
 ## Use
 
 The package is `scionarena` and conformance is one front-end on it. The `scionfit`
@@ -60,10 +66,19 @@ The closed loop, and the result it exists to produce:
 
 ```bash
 scionarena ui                                            # a browser, with the knobs
+scionarena cockpit                                       # watch a sweep while it happens
 scionarena demo                                          # smoke tier, ~10 s
 scionarena demo --tier dev --scopes 40 --slow 8          # add a deliberately slow model
 scionarena demo --tier realistic --scopes 100 --cycles 80
 ```
+
+`scionarena cockpit` is the interface for a *sweep* rather than a single run. It prints the
+cell count and a time estimate before you press run, and beside them everything the
+selection leaves out; it renders whatever is in the metric, axis, probe and baseline
+registries rather than a list of its own; and it shows the three deltas of one decision
+round on one timeline -- what the model was shown, what it did, and what the world did
+back. Frames are dropped rather than the run being slowed to deliver them, and a dropped
+frame is marked and never interpolated.
 
 Two reference models over one scenario, one seed and one set of scopes — nothing differs
 but the model — and a self-contained `report.html` of what each did to the network.
