@@ -1,4 +1,5 @@
 from .agents import TOOL_USING_MODELS, BudgetedProber
+from .layered import LayeredRanker
 from .models import (
     REFERENCE_MODELS,
     CapacityProportional,
@@ -9,6 +10,7 @@ from .models import (
 
 __all__ = [
     "EMAOracle",
+    "LayeredRanker",
     "MinRTTGreedy",
     "CapacityProportional",
     "ReferenceStochastic",

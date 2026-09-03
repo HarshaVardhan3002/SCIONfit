@@ -272,6 +272,62 @@ class World:
             background=min(0.95, ls.background * 1.6),
         )
 
+    def congest(self, iids: Sequence[str], background: float = 0.85) -> None:
+        """Move the **dynamic layer only**, on named links.
+
+        Deliberately distinct from :meth:`perturb_link`, which multiplies the
+        base latency *and* the background and so moves two layers at once. Probe
+        R11 asks what a model does when nothing static changed, so it needs a
+        change nothing static can be attributed to: the declared latency, the
+        declared bandwidth, the hop count and the interface set are all exactly
+        as they were, and only the congestion is different.
+        """
+        for iid in iids:
+            ls = self.links[iid]
+            self.links[iid] = LinkState(
+                capacity_mbps=ls.capacity_mbps,
+                base_latency_ms=ls.base_latency_ms,
+                base_loss=ls.base_loss,
+                background=min(0.95, max(0.0, background)),
+            )
+
+    def busiest_interfaces(self, n: int = 2) -> list[str]:
+        """The interfaces the most paths run over. Where a change will be felt."""
+        counts: dict[str, int] = defaultdict(int)
+        for p in self.paths:
+            for iid in dict.fromkeys(p.interfaces):
+                counts[iid] += 1
+        return [i for i, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
+
+    def resign(self, fraction: float = 1.0) -> dict[str, str]:
+        """Re-beacon: new identifiers, identical interface sequences.
+
+        The churn probe R12 measures against. Nothing about the network changes
+        -- same hops, same capacities, same latencies -- and a model that keyed
+        its memory on the identifier has just lost all of it while every one of
+        its outputs still looks plausible. Returns ``old id -> new id``.
+        """
+        renamed: dict[str, str] = {}
+        out: list[PathRef] = []
+        for index, path in enumerate(self.paths):
+            if self.rng.random() > fraction:
+                out.append(path)
+                continue
+            new_id = f"{path.path_id}@r{index}{int(self.t)}"
+            renamed[path.path_id] = new_id
+            out.append(
+                PathRef(
+                    path_id=new_id,
+                    src=path.src,
+                    dst=path.dst,
+                    interfaces=path.interfaces,
+                    expiry_s=path.expiry_s,
+                    mtu=path.mtu,
+                )
+            )
+        self.paths = out
+        return renamed
+
     def add_new_interfaces(self, n: int = 3) -> list[str]:
         """Introduce interfaces that did not exist at reset time.
 

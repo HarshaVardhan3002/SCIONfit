@@ -20,7 +20,14 @@ from scionarena.reference import REFERENCE_MODELS
 # Pinned. If a change moves this, it changed the substrate's behaviour, and the
 # PR must say which behaviour and why. Regenerate with:
 #   python -m pytest tests/test_trace.py -k pinned -q
-CONFORMANCE_TRACE_HASH = "29d940a70777"
+#
+# Moved by ADR 0023, deliberately and for two reasons: the suite went from ten
+# probes to thirteen, and ``ReferenceStochastic`` gained an adaptive-conformal
+# level so that R13 -- which it failed at 0.47 coverage against a nominal 0.8,
+# and never recovered from -- is passable by the model that exists to prove the
+# suite is satisfiable. ``LayeredRanker`` joined REFERENCE_MODELS in the same
+# change, which moves it a second time.
+CONFORMANCE_TRACE_HASH = "d71e8b042462"
 
 
 def portable(score: float | None) -> float | None:

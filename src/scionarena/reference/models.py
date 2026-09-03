@@ -257,6 +257,17 @@ class ReferenceStochastic:
                                observations age.
     """
 
+    #: Adaptive-conformal step and target miss rate (spec 19.5). The interval is
+    #: widened when it is missing more often than nominal and narrowed when it is
+    #: missing less. Without it the estimator is a lifetime running mean, so a
+    #: step change in the world leaves the interval sitting where the world used
+    #: to be and coverage never comes back -- which is exactly what probe R13
+    #: measured on this model before this existed: 0.67 before the shift, 0.47
+    #: after, and 0.47 for the rest of the run.
+    ETA_ACI = 0.06
+    MISS_TARGET = 0.2
+    MAX_INFLATION = 8.0
+
     def __init__(self, eta0: float = 2.0, lam_age: float = 0.02, msa_iters: int = 40):
         self.eta0 = eta0
         self.lam_age = lam_age
@@ -290,6 +301,15 @@ class ReferenceStochastic:
         self._last_obs_t: float = topo.t
         self._t: float = topo.t
         self._paths: dict[str, PathRef] = {p.path_id: p for p in topo.paths}
+        #: How much the nominal interval is being inflated by, from realised
+        #: coverage. One means "as calibrated"; it only moves when observations
+        #: land outside the interval this model itself published.
+        self._inflation: float = 1.0
+        #: The nowcast interval last published per path, so the next observation
+        #: for that path can score it. Written by ``predict`` at horizon zero,
+        #: which is the one impure thing this model does and is the price of an
+        #: adaptive level that does not need the harness to feed it back.
+        self._band: dict[str, tuple[float, float]] = {}
 
     def observe(self, obs: Sequence[Observation], topo: TopologySnapshot) -> None:
         self._t = topo.t
@@ -299,6 +319,13 @@ class ReferenceStochastic:
             if p is None or not p.interfaces:
                 continue
             self._last_obs_t = max(self._last_obs_t, o.t)
+            band = self._band.pop(o.path_id, None)
+            if band is not None and o.latency_ms is not None:
+                missed = 0.0 if band[0] <= o.latency_ms <= band[1] else 1.0
+                self._inflation = min(
+                    self.MAX_INFLATION,
+                    max(1.0, self._inflation * (1.0 + self.ETA_ACI * (missed - self.MISS_TARGET))),
+                )
             n = len(p.interfaces)
             for iid in p.interfaces:
                 if o.latency_ms is not None:  # None means not measured
@@ -421,7 +448,7 @@ class ReferenceStochastic:
             loss = min(0.9, (1.0 - surv) * f)
 
             # uncertainty grows with staleness and with unobserved hops
-            sigma = math.sqrt(var) * (1.0 + 0.02 * age) * (1.0 + 0.5 * unobserved)
+            sigma = math.sqrt(var) * (1.0 + 0.02 * age) * (1.0 + 0.5 * unobserved) * self._inflation
             zs = {0.1: -1.2816, 0.25: -0.6745, 0.5: 0.0, 0.75: 0.6745, 0.9: 1.2816}
             lat_q = {q: max(0.0, lat + z * sigma) for q, z in zs.items()}
             bw_q = {q: max(0.0, bw_min * (1.0 - 0.25 * z)) for q, z in zs.items()}
@@ -429,6 +456,8 @@ class ReferenceStochastic:
 
             denom = max(1.0, len(p.interfaces))
             conf = 1.0 / (1.0 + 0.01 * age + 1.5 * unobserved / denom + sigma / max(lat, 1e-6))
+            if horizon_s == 0.0:
+                self._band[p.path_id] = (lat_q[0.1], lat_q[0.9])
             out[p.path_id] = Prediction(
                 latency_ms=Dist(mean=lat, quantiles=lat_q),
                 throughput_mbps=Dist(mean=bw_min, quantiles=bw_q),
@@ -491,9 +520,17 @@ class ReferenceStochastic:
         )
 
 
+# Imported here rather than at the top because the only thing this module wants
+# from it is the registry entry, and ``layered`` imports nothing from here.
+from .layered import LayeredRanker  # noqa: E402
+
 REFERENCE_MODELS = {
     "ema": EMAOracle,
     "minrtt": MinRTTGreedy,
     "proportional": CapacityProportional,
     "reference": ReferenceStochastic,
+    # Its disciplined default. The variant that fails R11 is reachable as
+    # ``layered`` with ``discipline=false`` and is exercised in tests rather than
+    # pinned into the trace, where a deliberate FAIL would read as a regression.
+    "layered": LayeredRanker,
 }

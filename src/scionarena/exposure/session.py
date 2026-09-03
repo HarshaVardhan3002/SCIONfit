@@ -964,6 +964,16 @@ class Session:
 
     # ---------------------------------------------------------------- reports
 
+    def realised_shares(self) -> dict[str, float]:
+        """Path -> the share of traffic telemetry actually saw on it.
+
+        What ``_harvest_telemetry`` already computes, named and exposed so a
+        caller can build a :class:`Demand` that says which of the two shares it
+        is carrying (ADR 0023). A path with no traffic is absent rather than
+        present at zero: nobody measured it, and a zero would be a measurement.
+        """
+        return dict(self._traffic)
+
     def served_scopes(self) -> list[tuple[str, str]]:
         """The scopes the world has hosts on, as AS identifiers.
 
@@ -1116,6 +1126,21 @@ def run_episode(
     )
 
 
-def demand_from_advisory(advisory: Advisory, n_hosts: int = 1) -> Demand:
-    """Contract-shaped demand from a published advisory. Used by M3."""
-    return Demand(per_path=dict(advisory.normalised()), n_hosts=n_hosts)
+def demand_from_advisory(
+    advisory: Advisory,
+    n_hosts: int = 1,
+    realised: Mapping[str, float] | None = None,
+) -> Demand:
+    """Contract-shaped demand from a published advisory. Used by M3.
+
+    ``realised`` is what telemetry saw, and it is a separate argument rather than
+    something derived here because the caller is the only one that knows whether
+    any telemetry covers this scope at all (ADR 0023). Passing nothing keeps the
+    old meaning: a demand that is entirely the model's own intent, correctly
+    labelled as such.
+    """
+    return Demand(
+        per_path=dict(advisory.normalised()),
+        n_hosts=n_hosts,
+        realised=None if realised is None else dict(realised),
+    )

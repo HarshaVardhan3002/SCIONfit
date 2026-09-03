@@ -1,7 +1,15 @@
-"""The ten conformance probes, R1 through R10.
+"""The thirteen conformance probes, R1 through R13.
 
 Each probe corresponds to one requirement from the architecture proposal.
 Each one changes exactly one thing and watches what the model does.
+
+R11 to R13 arrived with ADR 0023, and R4 was re-aimed at the same time: it was
+written to catch a model that collapses under ``crypto_bound`` identifiers, and
+Q1 resolved that the deployed fingerprint hashes the interface sequence alone --
+so failing a model there is a false positive against the thing conformance claims
+to measure. R4 keeps what it actually tests, which is generalisation to
+interfaces that did not exist at reset, and the identity question moved to R12,
+where it is graded and never blocks.
 """
 
 from __future__ import annotations
@@ -241,6 +249,17 @@ class R3MissingnessDiscrimination(Probe):
 
 
 class R4UnseenInterfaces(Probe):
+    """Generalisation to new interfaces. **Not** the identity question -- see R12.
+
+    Re-aimed by ADR 0023. This probe was justified by the hazard that a model
+    keying on a path identifier loses its history whenever a segment is
+    re-signed. Q1 resolved that the deployed fingerprint hashes the interface
+    sequence alone, so that hazard is not reached through the identifier and a
+    model failing here is failing something else: whether it can score a path
+    built from interfaces that did not exist when it was reset. That is a real
+    deployment requirement and it is what the code below has always tested.
+    """
+
     probe_id, requirement = "R4", "Generalises to interfaces not seen in training"
     title = "Survives topology churn"
     capability = "handles_unseen_interfaces"
@@ -690,6 +709,372 @@ class R10StalenessResponse(Probe):
         )
 
 
+# --------------------------------------------------------------------------
+# R11-R13: the three the review made possible (ADR 0023)
+
+
+def _order(pred) -> list[str]:
+    """Path ids cheapest first, by the model's own scalar cost."""
+    return [pid for pid, _ in sorted(pred.items(), key=lambda kv: kv[1].cost())]
+
+
+def _published_order(advisory) -> list[str]:
+    """The ranking a model actually publishes: heaviest weight first.
+
+    R11 measures this rather than the order of the point estimates, and the
+    distinction is the whole design of the probe. A latency-class model is
+    entitled to nowcast congestion -- refusing to would fail R1 and R3 for
+    reasons that have nothing to do with layers -- and is *not* entitled to let
+    that nowcast decide who goes first. Only the advisory says who goes first.
+    """
+    weights = advisory.normalised()
+    return [pid for pid, _ in sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def _mean_spread(pred) -> float:
+    widths = [p.latency_ms.spread for p in pred.values()]
+    return mean(widths) if widths else 0.0
+
+
+def _kendall_swaps(a: list[str], b: list[str]) -> int:
+    """Discordant pairs between two orderings of the same set.
+
+    A count rather than a boolean because "it swapped one adjacent pair" and
+    "it inverted the ranking" are different findings and the evidence should
+    say which.
+    """
+    rank = {pid: i for i, pid in enumerate(a)}
+    seq = [rank[pid] for pid in b if pid in rank]
+    return sum(1 for i in range(len(seq)) for j in range(i + 1, len(seq)) if seq[i] > seq[j])
+
+
+class R11LayerDiscipline(Probe):
+    probe_id, requirement = "R11", "Ranks on the layer its requirement class allows"
+    title = "Layer discipline"
+    remedy = (
+        "Rank on the static layer plus liveness; let the dynamic layer widen the "
+        "interval and move mass, never reorder the ranking."
+    )
+
+    #: Backgrounds tried, in order, until the world's own cheapest path stops
+    #: being the cheapest. The probe refuses to grade a change that did not
+    #: happen, so it checks its own experiment before it checks the model.
+    levels = (0.45, 0.6, 0.75, 0.88, 0.95)
+
+    def run(self, model, world, rng):
+        declared = getattr(model.capabilities, "requirement_class", "")
+        if declared != "latency":
+            return self.result(
+                Status.NOT_APPLICABLE,
+                "Only a model declaring requirement_class='latency' has claimed "
+                f"anything this probe can contradict; this one declares "
+                f"{declared or 'nothing'}.",
+            )
+
+        topo = _warm(model, world, rng)
+        sla = SLA.presets()["bulk"]
+        before_advice = model.advise(topo, list(topo.paths), sla, n_hosts=1000)
+        before_pred = model.predict(topo, list(topo.paths))
+        rank_before = _published_order(before_advice)
+        width_before = _mean_spread(before_pred)
+        if len(rank_before) < 2:
+            return self.result(Status.NOT_APPLICABLE, "Fewer than two paths to order.")
+
+        # The **world's** cheapest path, not the model's front-runner. What the
+        # probe has to stage is reordering *pressure*: some other path must
+        # genuinely become the cheapest, so that a model ranking on the dynamic
+        # layer has a reason to swap and a model ranking on the static layer has
+        # something to resist. Which path the model happened to prefer is what
+        # is being measured, so it must not choose the experiment.
+        was_cheapest = self._true_cheapest(world)
+        target = next((p for p in topo.paths if p.path_id == was_cheapest), None)
+        if target is None:
+            return self.result(Status.ERROR, "The cheapest path is not in the snapshot.")
+        users: dict[str, int] = {}
+        for iid in dict.fromkeys(target.interfaces):
+            users[iid] = sum(1 for p in topo.paths if p is not target and iid in p.interfaces)
+        fewest = min(users.values(), default=0)
+        # Least-shared interfaces first, so the congestion lands on the target and
+        # as little else as possible; every interface of the path if that is not
+        # enough to move it off the top. Aiming matters less than it looks --
+        # whatever is congested, nothing is graded until the world's own cheapest
+        # path has actually changed.
+        narrow = [iid for iid, n in users.items() if n == fewest]
+        wide = list(dict.fromkeys(target.interfaces))
+        if not narrow:
+            return self.result(
+                Status.NOT_APPLICABLE, "The cheapest path has no interfaces to congest."
+            )
+
+        saved = dict(world.links)
+        staged = None
+        exclusive = narrow
+        for aim in (narrow, wide):
+            for level in self.levels:
+                world.links = dict(saved)
+                world.congest(aim, background=level)
+                if self._true_cheapest(world) != target.path_id:
+                    staged, exclusive = level, aim
+                    break
+            if staged is not None:
+                break
+        if staged is None:
+            world.links = dict(saved)
+            return self.result(
+                Status.NOT_APPLICABLE,
+                "No congestion level short of saturation made another path genuinely "
+                "cheaper, so there is no reordering pressure to resist.",
+                was_cheapest=was_cheapest,
+                tried=wide,
+            )
+
+        for _ in range(6):
+            model.observe(world.observe(demand=world.uniform_demand()), world.snapshot())
+            world.step()
+        topo2 = world.snapshot()
+
+        # The probe's own controlled change, checked. Nothing static may have
+        # moved, or a reordering is not attributable to congestion.
+        moved = [
+            iid
+            for iid in exclusive
+            if topo.interfaces[iid].declared_latency_ms != topo2.interfaces[iid].declared_latency_ms
+            or topo.interfaces[iid].declared_bw_mbps != topo2.interfaces[iid].declared_bw_mbps
+        ]
+        if moved or {p.path_id for p in topo.paths} != {p.path_id for p in topo2.paths}:
+            return self.result(
+                Status.ERROR,
+                "The probe moved something other than the dynamic layer; its own "
+                "controlled change is not controlled.",
+                static_moved=moved,
+            )
+
+        after_advice = model.advise(topo2, list(topo2.paths), sla, n_hosts=1000)
+        after_pred = model.predict(topo2, list(topo2.paths))
+        rank_after = _published_order(after_advice)
+        width_after = _mean_spread(after_pred)
+        swaps = _kendall_swaps(rank_before, rank_after)
+        ev = dict(
+            congested=exclusive,
+            background=staged,
+            was_cheapest=was_cheapest,
+            now_cheapest=self._true_cheapest(world),
+            rank_before=rank_before,
+            rank_after=rank_after,
+            swaps=swaps,
+            spread_before=round(width_before, 4),
+            spread_after=round(width_after, 4),
+            weight_shifted=round(
+                abs(
+                    after_advice.normalised().get(rank_before[0], 0.0)
+                    - before_advice.normalised().get(rank_before[0], 0.0)
+                ),
+                4,
+            ),
+        )
+
+        if swaps:
+            return self.result(
+                Status.FAIL,
+                f"Reordered {swaps} pair(s) of its published ranking on a change in "
+                "congestion alone. A latency-class model ranking on a lagged "
+                "congestion estimate is routing on lagged load, which is the "
+                "oscillation mechanism the requirement classes exist to prevent.",
+                score=0.0,
+                **ev,
+            )
+        if width_after <= width_before * 1.01 and ev["weight_shifted"] < 1e-3:
+            return self.result(
+                Status.WEAK,
+                "Held its ranking, which is the requirement, but the congestion "
+                "widened nothing and moved no mass either -- so the dynamic layer "
+                "is being ignored rather than used in the right place.",
+                score=0.6,
+                **ev,
+            )
+        return self.result(
+            Status.PASS,
+            "Held its published ranking through congestion that genuinely made "
+            "another path cheaper, and answered with width and mass instead.",
+            score=1.0,
+            **ev,
+        )
+
+    @staticmethod
+    def _true_cheapest(world) -> str:
+        """The world's own cheapest path by realised latency, no demand."""
+        return min(world.paths, key=lambda p: world.path_metrics(p)[0]).path_id
+
+
+class R12IdentityChurnHygiene(Probe):
+    """A grade, never a blocking failure. See ADR 0023."""
+
+    probe_id, requirement = "R12", "Memory survives a re-signed segment"
+    title = "Identity churn hygiene"
+    remedy = (
+        "Key per-path memory on the interface sequence or on structural features, "
+        "never on the identifier the path arrived under."
+    )
+
+    def run(self, model, world, rng):
+        topo = _warm(model, world, rng)
+        before = model.predict(topo, list(topo.paths))
+
+        # Re-beaconing: new identifiers, identical interface sequences, identical
+        # network. Nothing about the world has changed.
+        renamed = world.resign(fraction=1.0)
+        topo2 = world.snapshot()
+        if not renamed:
+            return self.result(Status.NOT_APPLICABLE, "Nothing was re-signed.")
+
+        try:
+            after = model.predict(topo2, list(topo2.paths))
+        except Exception as exc:
+            return self.result(
+                Status.WEAK,
+                f"Raised on a re-signed path set: {type(exc).__name__}: {exc}. "
+                "Graded rather than failed, because Q1 resolved that the deployed "
+                "fingerprint is stable across re-signing, so this is hygiene.",
+                score=0.0,
+                n_renamed=len(renamed),
+            )
+
+        moved, total = 0, 0
+        for old, new in renamed.items():
+            if old not in before or new not in after:
+                continue
+            total += 1
+            a, b = before[old].cost(), after[new].cost()
+            if _rel(a, b) > 0.02:
+                moved += 1
+        if total == 0:
+            return self.result(Status.NOT_APPLICABLE, "No path was scored both ways.")
+
+        retained = 1.0 - moved / total
+        ev = dict(
+            n_renamed=len(renamed), n_compared=total, n_moved=moved, retained=round(retained, 3)
+        )
+        if retained >= 0.95:
+            return self.result(
+                Status.PASS,
+                "Re-signing changed the identifiers and changed nothing the model said.",
+                score=retained,
+                **ev,
+            )
+        return self.result(
+            Status.WEAK,
+            f"{moved} of {total} predictions moved when only the identifiers did. "
+            "The deployed fingerprint hashes the interface sequence alone (Q1), so "
+            "this is a hygiene grade rather than a conformance failure -- but a "
+            "model keying on the identifier discards its history every refresh "
+            "cycle while every one of its outputs still looks plausible.",
+            score=retained,
+            **ev,
+        )
+
+
+class R13CalibrationUnderShift(Probe):
+    probe_id, requirement = "R13", "Intervals recover nominal coverage after a shift"
+    title = "Calibration under shift"
+    # Deliberately *not* ``capability = "distributional"``. A model that emits
+    # intervals and fails to recover their coverage after a shift has not lied
+    # about being distributional -- it is distributional and badly calibrated,
+    # which is a different and more interesting finding. Tying the probe to the
+    # flag would have printed FALSE_CLAIM for it.
+    capability = None
+    remedy = (
+        "Adapt the interval level from realised coverage rather than fixing it at calibration time."
+    )
+
+    #: The interval a distributional model is asked for, and what coverage is
+    #: scored against. Same figure as the accuracy family's NOMINAL.
+    nominal = 0.8
+    #: Steps after the shift, and how many samples make one coverage window.
+    horizon = 24
+    window = 6
+
+    def run(self, model, world, rng):
+        topo = _warm(model, world, rng)
+        sample = model.predict(topo, list(topo.paths))
+        if not any(p.latency_ms.is_distributional for p in sample.values()):
+            return self.result(
+                Status.DECLARED_ABSENT,
+                "Point estimator: there is no interval whose coverage could recover.",
+            )
+
+        before = self._coverage(model, world, steps=self.window)
+
+        # A real degrade rather than congestion: this is a shift in the world,
+        # which is what an adaptive level is for.
+        hurt = world.busiest_interfaces(1)
+        world.perturb_link(hurt[0], latency_factor=3.0)
+
+        windows: list[float] = []
+        for _ in range(self.horizon // self.window):
+            windows.append(self._coverage(model, world, steps=self.window))
+
+        floor = 0.75 * self.nominal
+        recovered_at = next((i for i, c in enumerate(windows) if c >= floor), None)
+        ev = dict(
+            nominal=self.nominal,
+            coverage_before=round(before, 3),
+            coverage_after=[round(c, 3) for c in windows],
+            degraded=hurt,
+            recovered_window=recovered_at,
+        )
+        if before < floor:
+            return self.result(
+                Status.NOT_APPLICABLE,
+                f"Coverage was already {before:.2f} against a nominal {self.nominal} "
+                "before the shift, so there is no calibration here to lose.",
+                **ev,
+            )
+        if recovered_at is None:
+            return self.result(
+                Status.FAIL,
+                f"Coverage fell to {windows[0]:.2f} and never came back within "
+                f"{self.horizon} steps. A fixed interval width does exactly this, and "
+                "every coverage figure the model reports afterwards is describing a "
+                "world that has moved.",
+                score=0.0,
+                **ev,
+            )
+        if recovered_at == 0:
+            return self.result(
+                Status.PASS,
+                "Coverage held through the shift.",
+                score=1.0,
+                **ev,
+            )
+        return self.result(
+            Status.WEAK,
+            f"Coverage recovered, after {recovered_at * self.window} steps of "
+            "reporting intervals it was not achieving.",
+            score=0.6,
+            **ev,
+        )
+
+    def _coverage(self, model, world, steps: int) -> float:
+        """Fraction of realised latencies that fell inside the model's own interval."""
+        hits = total = 0
+        demand = world.uniform_demand()
+        for _ in range(steps):
+            topo = world.snapshot()
+            predicted = model.predict(topo, list(topo.paths))
+            world.step()
+            for o in world.observe(demand=demand, noise=0.0):
+                p = predicted.get(o.path_id)
+                if p is None or o.latency_ms is None or not p.latency_ms.is_distributional:
+                    continue
+                qs = p.latency_ms.quantiles or {}
+                ks = sorted(qs)
+                lo, hi = qs[ks[0]], qs[ks[-1]]
+                total += 1
+                hits += int(lo <= o.latency_ms <= hi)
+            model.observe(world.observe(demand=demand), world.snapshot())
+        return hits / total if total else 0.0
+
+
 ALL_PROBES = [
     R1SharedLinkSensitivity(),
     R2UnseenPathComposition(),
@@ -701,4 +1086,9 @@ ALL_PROBES = [
     R8EmitsAssignment(),
     R9SelfConsistency(),
     R10StalenessResponse(),
+    # Appended rather than inserted, so an existing report card's column order
+    # is unchanged and two cards from different versions still line up.
+    R11LayerDiscipline(),
+    R12IdentityChurnHygiene(),
+    R13CalibrationUnderShift(),
 ]

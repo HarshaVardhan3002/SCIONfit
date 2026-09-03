@@ -136,10 +136,40 @@ class Demand:
     This is the input that makes a model closed-loop capable.  ``per_path``
     should sum to 1 over the paths of one (src, dst) scope; the harness
     normalises and never assumes the model does.
+
+    **Intended and realised are two different things** (ADR 0023).
+    ``per_path`` is what was *asked for* -- it is built from a published
+    advisory -- and ``realised`` is what telemetry saw. They differ by exactly
+    the sampling noise, the defectors, the dwell timers and the hysteresis, and
+    ``exposure/streams.py`` has always said so while the probes were handed the
+    first and told it was the second: "a model that assumes its advice was
+    followed exactly is wrong by exactly that much".
     """
 
     per_path: Mapping[str, float]
     n_hosts: int = 1
+    #: What was actually measured on each path, where anything was. ``None``
+    #: means no telemetry at all; a path absent from a non-``None`` mapping
+    #: means no telemetry *for that path*, which is ignorance rather than a
+    #: measured zero. A probe that treated the two the same would score a model
+    #: for a path nobody was using.
+    realised: Mapping[str, float] | None = None
+
+    @property
+    def intended(self) -> Mapping[str, float]:
+        """What was asked for. The same object as ``per_path``, named."""
+        return self.per_path
+
+    def gap(self) -> Mapping[str, float]:
+        """``realised - intended`` per path, over the paths telemetry covered.
+
+        Empty when nothing was measured. This is the quantity a performativity
+        probe is about: how far the world went from where the model pointed it.
+        """
+        if self.realised is None:
+            return {}
+        want = self.normalised()
+        return {k: v - want.get(k, 0.0) for k, v in self.realised.items()}
 
     def normalised(self) -> Mapping[str, float]:
         tot = sum(max(0.0, v) for v in self.per_path.values())
@@ -343,6 +373,16 @@ class Capabilities:
     #: ``scionarena adapt`` checks it behaviourally and found the inherited
     #: default on a shipped baseline the first time it ran.
     stateful: bool = True
+
+    #: Which of the requirement classes of the spec this model is for:
+    #: ``latency``, ``bandwidth``, ``loss``, or empty for a model that did not
+    #: say. It decides which *layer* the model is allowed to rank on -- a
+    #: latency-class model ranks on the static layer plus liveness and lets the
+    #: dynamic layer widen its intervals, never reorder them, because ranking on
+    #: a fifteen-second-old congestion estimate is routing on lagged load. Probe
+    #: R11 checks it (ADR 0023). Empty is NOT_APPLICABLE rather than a failure:
+    #: a model that makes no claim has not claimed anything R11 can contradict.
+    requirement_class: str = ""
 
     #: Implements ``act`` and drives itself through the tool registry rather
     #: than being driven through observe/predict/advise.
