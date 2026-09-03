@@ -51,7 +51,7 @@ from ..bench.sweep import SweepSpec, plan, run_sweep
 from ..instrument.channel import FrameLog
 from .panels import catalogue, estimate_s, selection
 
-__all__ = ["main", "serve", "Cockpit", "Run"]
+__all__ = ["main", "serve", "Cockpit", "Run", "plan_for"]
 
 TITLE = "scionarena — cockpit"
 DEFAULT_PORT = 8770
@@ -311,6 +311,17 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word}
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Every string below that came from a loaded model goes through this. Metric
+// names, cell labels and architecture tags are all supplied by whoever wrote
+// the model under test, and the first version of this page dropped them into
+// innerHTML unescaped -- so a model whose Capabilities.name carried markup ran
+// it in the operator's browser. The page is served to localhost and the
+// operator chose the model, so the blast radius is small; the fix is one
+// function, so the size of the radius is not the argument.
+const esc = (v) => String(v === undefined || v === null ? "" : v)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 let cursor = 0, frames = [], cat = null;
 
 async function get(url){ const r = await fetch(url); return r.json(); }
@@ -336,8 +347,8 @@ async function refreshPlan(){
 function renderCatalogue(c){
   const rows = ["<tr><th>metric</th><th>family</th><th>dir</th><th>shape</th></tr>"];
   for(const m of c.metrics){
-    rows.push(`<tr><td title="${m.doc.replace(/"/g,"&quot;")}">${m.name}${m.support?' <span class="pill">count</span>':''}</td>`+
-              `<td>${m.family}</td><td>${m.direction}</td><td>${m.shape}</td></tr>`);
+    rows.push(`<tr><td title="${esc(m.doc)}">${esc(m.name)}${m.support?' <span class="pill">count</span>':''}</td>`+
+              `<td>${esc(m.family)}</td><td>${esc(m.direction)}</td><td>${esc(m.shape)}</td></tr>`);
   }
   $("cat").innerHTML = rows.join("");
 }
@@ -346,11 +357,11 @@ function renderResults(d){
   if(!d.cells.length){ $("res").innerHTML = "<tr><td>nothing scored yet</td></tr>"; return; }
   const keys = ["regret_ratio","swing","coverage.h60","decision_p95_s","recovered","recovered_to"]
       .filter(k => d.metrics.includes(k));
-  const head = ["<tr><th>model</th><th>arch</th><th>where</th>"+keys.map(k=>`<th>${k}</th>`).join("")+"</tr>"];
+  const head = ["<tr><th>model</th><th>arch</th><th>where</th>"+keys.map(k=>`<th>${esc(k)}</th>`).join("")+"</tr>"];
   for(const c of d.cells.slice(-60)){
     const moved = Object.entries(c.axes).filter(([k,v]) => v !== baseline[k]).map(([k,v])=>k+"="+v);
-    head.push("<tr><td>"+c.label+"</td><td>"+(c.architecture||"—")+"</td><td>"+
-      (moved.join(", ")||"baseline")+"</td>"+
+    head.push("<tr><td>"+esc(c.label)+"</td><td>"+esc(c.architecture||"—")+"</td><td>"+
+      esc(moved.join(", ")||"baseline")+"</td>"+
       keys.map(k => `<td>${c.metrics[k]===undefined?"—":(+c.metrics[k]).toFixed(3)}</td>`).join("")+"</tr>");
   }
   $("res").innerHTML = head.join("");
@@ -451,6 +462,28 @@ def _page() -> str:
 # the server
 
 
+def plan_for(form: dict[str, Any]) -> dict[str, Any]:
+    """What this form would cost, answered before anybody commits to it.
+
+    Outside the request handler because the estimate is the interesting part and
+    a test should not have to stand up a socket to check it -- ``cycles`` was
+    missing from the sum for a whole phase, and the handler is where that hid.
+    """
+    try:
+        spec, chose = spec_from(form)
+    except Exception as exc:  # noqa: BLE001 -- a bad form is a message, not a 500
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    cells = len(plan(spec))
+    seconds = estimate_s(cells, spec.tier, cycles=spec.cycles)
+    return {
+        "cells": cells,
+        "estimate_s": round(seconds, 1),
+        "estimate": _human(seconds),
+        "omitted": chose["omitted"],
+        "digest": spec.digest(),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "scionarena-cockpit"
 
@@ -480,7 +513,7 @@ class Handler(BaseHTTPRequestHandler):
         elif route.path == "/api/raw":
             self._json(200, self.cockpit.raw())
         elif route.path == "/api/plan":
-            self._json(200, self._plan({k: v[0] for k, v in query.items()}))
+            self._json(200, plan_for({k: v[0] for k, v in query.items()}))
         else:
             self._send(404, "text/plain", b"no")
 
@@ -498,21 +531,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"{type(exc).__name__}: {exc}"})
             return
         self._json(200, {"run": run.status(), "omitted": chose["omitted"]})
-
-    def _plan(self, form: dict[str, Any]) -> dict[str, Any]:
-        try:
-            spec, chose = spec_from(form)
-        except Exception as exc:  # noqa: BLE001
-            return {"error": f"{type(exc).__name__}: {exc}"}
-        cells = len(plan(spec))
-        seconds = estimate_s(cells, spec.tier)
-        return {
-            "cells": cells,
-            "estimate_s": round(seconds, 1),
-            "estimate": _human(seconds),
-            "omitted": chose["omitted"],
-            "digest": spec.digest(),
-        }
 
     def _json(self, code: int, payload: dict[str, Any]) -> None:
         self._send(code, "application/json", json.dumps(payload).encode())

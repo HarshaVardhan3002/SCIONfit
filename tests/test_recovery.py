@@ -347,3 +347,64 @@ def test_the_series_and_the_events_are_the_only_inputs() -> None:
     computable from a result read back off disk months later."""
     data = _run([10.0] * 30 + [40.0] * 6 + [10.0] * 20, [(30.0, "link_degrade")])
     assert np.isfinite(float(compute(data, families=["recovery"])["cost_during_recovery"] or 0.0))
+
+
+# --------------------------------------------------------------- the draw itself
+
+
+def test_two_disturbances_that_differ_only_in_params_pick_different_links() -> None:
+    """Names the bug: ``expand`` seeded its draw on ``len(self.kind)``, so a
+    scenario saying "degrade a tenth mildly and a tenth hard, together" degraded
+    the *same* tenth twice and left the other nine tenths untouched -- while the
+    result file, which records only the two disturbances, read as a fifth."""
+    scenario = Scenario(
+        name="t",
+        seed=7,
+        duration_s=600.0,
+        topology=TopologySpec(tier="dev"),
+        disturbances=(
+            Disturbance("link_degrade", at_frac=0.5, fraction=0.1, params={"factor": 0.8}),
+            Disturbance("link_degrade", at_frac=0.5, fraction=0.1, params={"factor": 0.2}),
+        ),
+    )
+    world = scenario.build()
+    mild = {int(e.params["link"]) for e in world.timeline if e.params.get("factor") == 0.8}
+    hard = {int(e.params["link"]) for e in world.timeline if e.params.get("factor") == 0.2}
+    assert mild and hard
+    assert mild != hard, "identical draws: the second disturbance is a no-op dressed as a fault"
+    assert len(mild | hard) > len(mild), "two tenths must reach more links than one"
+
+
+def test_a_negative_seed_is_refused_by_name_and_not_by_numpy() -> None:
+    """Names the crash: a negative seed reached ``np.random.default_rng`` in
+    three unrelated places and each raised ``ValueError: expected non-negative
+    integer`` from inside numpy -- naming neither the scenario nor the field,
+    and only at build time, long after the operator typed it."""
+    with pytest.raises(ValueError, match="seed must not be negative"):
+        Scenario(
+            name="t",
+            seed=-42,
+            duration_s=600.0,
+            topology=TopologySpec(tier="smoke"),
+            disturbances=(
+                Disturbance("link_degrade", at_frac=0.5, fraction=0.2, params={"factor": 0.3}),
+            ),
+        )
+
+
+def test_the_draw_is_still_the_same_draw_twice() -> None:
+    """The seed change must not have cost determinism (invariant 4)."""
+
+    def links() -> list[int]:
+        scenario = Scenario(
+            name="t",
+            seed=3,
+            duration_s=600.0,
+            topology=TopologySpec(tier="smoke"),
+            disturbances=(
+                Disturbance("link_degrade", at_frac=0.4, fraction=0.3, params={"factor": 0.5}),
+            ),
+        )
+        return [int(e.params["link"]) for e in scenario.build().timeline]
+
+    assert links() == links()

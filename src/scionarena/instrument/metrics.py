@@ -911,14 +911,32 @@ def context_bytes(data: MetricInput) -> float | None:
     return _said(data, "context_bytes")
 
 
+@metric("context_offered_bytes", "operational", support=True)
+def context_offered_bytes(data: MetricInput) -> float | None:
+    """Bytes of raw log the harness put in front of the model, cumulative.
+
+    The denominator under ``context_retained``, registered because that ratio
+    is otherwise a snapshot over a running total and nothing in the result file
+    says so. Two runs of different lengths are not comparable on the ratio
+    alone; they are comparable on the pair.
+    """
+    return _said(data, "context_offered_bytes")
+
+
 @metric("context_retained", "operational", higher_is_better=None)
 def context_retained(data: MetricInput) -> float | None:
-    """Kept over offered. Neither direction is better, which is why it is signed.
+    """Bytes still held at the end, over bytes ever offered. Not a rate.
 
-    A model retaining everything has not solved context management, it has
-    avoided it, and one retaining nothing is answering from this turn alone.
-    What the number is for is reading beside the accuracy family: the question
-    is what a given retention bought.
+    Neither direction is better, which is why it is unsigned. A model retaining
+    everything has not solved context management, it has avoided it, and one
+    retaining nothing is answering from this turn alone. What the number is for
+    is reading beside the accuracy family: the question is what a given
+    retention bought.
+
+    **It shrinks with episode length by construction** -- a snapshot divided by
+    a running total -- so it compares models within a run and not runs with each
+    other. ``context_offered_bytes`` is registered alongside it so the
+    denominator is on the record rather than inferred.
     """
     return _said(data, "context_retained")
 

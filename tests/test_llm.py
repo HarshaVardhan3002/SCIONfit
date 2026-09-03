@@ -400,3 +400,49 @@ def test_a_weight_for_a_path_that_does_not_exist_is_dropped() -> None:
         world=world,
     )
     assert result.session_summary["advisories"] > 0, "it still published, on its own estimate"
+
+
+# ------------------------------------------------- what the model can actually see
+
+
+def test_keeping_one_id_does_not_keep_everything_that_shares_a_timestamp() -> None:
+    """Names the bug: ``_remember`` matched a requested id against the line's
+    first token, and the first token is the *timestamp*. A model asking to keep
+    the id "20.0" kept every unrelated record taken at t=20 and was scored as
+    though it had chosen them, which makes the retention metric satisfiable by
+    accident."""
+    agent = LanguageModelAgent(retain="recent", context_bytes=99_999)
+    lines = ["20.0 pA 10.0 0.001", "20.0 pB 99.0 0.001", "30.0 pC 11.0 0.001"]
+    agent._remember(("20.0",), lines)
+    assert agent._kept == lines, (
+        "an id nothing matches must fall back to keeping the offer, not silently "
+        "select the two records that happen to share a timestamp with it"
+    )
+
+    agent = LanguageModelAgent(retain="recent", context_bytes=99_999)
+    agent._remember(("20.0 pA 10.0 0.001",), lines)
+    assert agent._kept == ["20.0 pA 10.0 0.001"], "a whole line still selects that line"
+
+
+def test_this_turns_records_are_observed_when_the_prompt_is_built() -> None:
+    """Names the bug: ``_last_seen`` read only ``self._kept``, which is updated
+    at the *end* of the turn, so a path measured moments ago was presented to the
+    transport as never observed. The scripted policy picks probe targets by that
+    exact field, so it re-probed paths it had already paid for -- a charge
+    against the budget, under an invariant that every call is charged."""
+    agent = LanguageModelAgent(retain="recent", context_bytes=99_999)
+    fresh = ["10.0 pA 21.00 0.0010", "10.0 pB 44.00 0.0010"]
+    assert agent._last_seen("pA") is None, "nothing retained yet"
+    assert agent._last_seen("pA", fresh) == pytest.approx(21.0), (
+        "a measurement taken this turn is something the model can see this turn"
+    )
+
+
+def test_retention_still_decides_what_survives_the_turn() -> None:
+    """The fix must not have made ``fresh`` a second memory: what carries to the
+    next turn is still only what ``_remember`` kept."""
+    agent = LanguageModelAgent(retain="none", context_bytes=99_999)
+    fresh = ["10.0 pA 21.00 0.0010"]
+    assert agent._last_seen("pA", fresh) == pytest.approx(21.0)
+    agent._remember((), fresh)
+    assert agent._last_seen("pA") is None, "retain=none keeps nothing across turns"

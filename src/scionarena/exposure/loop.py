@@ -523,7 +523,7 @@ def run_loop(
     result.series = sampler.series
     # Attached after calibration, so the throwaway rounds are not in the series,
     # and the grid is anchored where the episode starts.
-    calls_before = int(session.summary()["calls"])
+    calls_before = session.n_calls
     records_before = len(session.log)
     with sampler:
         deadline = session.now + cadence
@@ -565,7 +565,7 @@ def run_loop(
                         session, result, cycle, published_now, calls_before, records_before
                     )
                 )
-            calls_before = int(session.summary()["calls"])
+            calls_before = session.n_calls
             records_before = len(session.log)
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
@@ -605,7 +605,14 @@ def _round_frame(
         "max_weight": round(
             max((max(a["weights"].values(), default=0.0) for a in published), default=0.0), 4
         ),
-        "calls": max(0, int(session.summary()["calls"]) - calls_before),
+        # ``session.n_calls`` rather than ``summary()["calls"]``. Summary walks
+        # the whole log twice, so calling it once per round is quadratic in the
+        # number of rounds: measured at 2.5 ms on a 200-record log and 42 ms on
+        # a 4,000-record one, which at the realistic tier's round count would
+        # make watching a run the most expensive thing in it -- the exact
+        # failure the drop-on-backpressure design exists to prevent, arriving
+        # through the front door.
+        "calls": max(0, session.n_calls - calls_before),
         "records": max(0, len(session.log) - records_before),
         "mean_cost_ms": round(series.mean_cost_ms[-1] if series.mean_cost_ms else 0.0, 3),
         "best_cost_ms": round(series.best_cost_ms[-1] if series.best_cost_ms else 0.0, 3),

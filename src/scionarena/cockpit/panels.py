@@ -37,17 +37,27 @@ from ..reference.baselines import MANDATORY_BASELINES
 
 __all__ = ["catalogue", "selection", "estimate_s", "TIER_COST_S"]
 
-#: Measured seconds per cell per tier, at the default cadence, on one core of the
+#: Measured seconds per cell per tier **per decision round**, on one core of the
 #: machine this was recorded on. A constant rather than a model: the point is to
 #: tell somebody clicking "realistic" what they are about to start *before* they
 #: start it, and a wrong order of magnitude is the only error that matters here.
 #: It is labelled as this machine's wherever it is shown.
+#:
+#: Per round rather than per cell, which the first version got wrong. A cell is
+#: not a fixed amount of work -- it is ``cycles`` decision rounds -- so a flat
+#: per-cell figure predicted 32 s for a 108-cell sweep at 90 rounds that took
+#: about 250 s, and would have been wrong in the *reassuring* direction for
+#: anyone raising the round count.
 TIER_COST_S: Mapping[str, float] = {
-    "smoke": 1.2,
-    "dev": 26.0,
-    "realistic": 420.0,
-    "stress": 5_400.0,
+    "smoke": 0.10,
+    "dev": 0.29,
+    "realistic": 4.7,
+    "stress": 60.0,
 }
+
+#: What ``cycles`` the figures above are per-round *of*. A round is not free of
+#: the tier: at the realistic tier a round touches far more of the network.
+NOMINAL_CYCLES = 1
 
 
 def catalogue() -> dict[str, Any]:
@@ -146,12 +156,14 @@ def selection(
     }
 
 
-def estimate_s(cells: int, tier: str, workers: int = 1) -> float:
+def estimate_s(cells: int, tier: str, workers: int = 1, cycles: int = 60) -> float:
     """Roughly how long ``cells`` will take. This machine's numbers, and said so.
 
-    Deliberately crude and deliberately *before* the run. A judge who clicks
+    Deliberately crude and deliberately *before* the run. Somebody who clicks
     "realistic" without being told what that costs deserves to know beforehand,
-    and an order of magnitude is enough to make that decision.
+    and an order of magnitude is enough to make that decision -- which is why
+    ``cycles`` is an argument rather than an assumption. A cell is not a fixed
+    amount of work and the first version of this treated it as one.
     """
-    per_cell = TIER_COST_S.get(tier, TIER_COST_S["dev"])
-    return max(0.0, cells) * per_cell / max(1, workers)
+    per_round = TIER_COST_S.get(tier, TIER_COST_S["dev"])
+    return max(0.0, cells) * max(1, cycles) * per_round / max(1, workers)

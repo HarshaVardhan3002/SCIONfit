@@ -25,6 +25,7 @@ scenario without building 2,000 ASes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -309,6 +310,25 @@ class Disturbance:
         if self.count < 0:
             raise ValueError("count must not be negative")
 
+    def _entropy(self, seed: int, at_s: float, want: int) -> list[int]:
+        """Seed material for the draw. Two things it has to get right.
+
+        It must fit: a seed is masked into range rather than handed to
+        ``default_rng`` raw, which refuses anything negative or over 128 bits.
+        ``Scenario`` refuses a negative seed outright, so the mask here is a
+        floor and not the policy.
+
+        And it must separate two disturbances that differ only in their
+        parameters. The first version mixed in ``len(self.kind)``, so
+        "degrade a tenth of the links mildly" and "degrade a tenth of the links
+        hard", scheduled together, drew **exactly the same links** -- a tenth
+        degraded twice rather than a fifth degraded, and the result file reads
+        identically either way. The params go into the hash.
+        """
+        material = f"{self.kind}|{at_s}|{want}|{sorted(self.params.items())}"
+        tag = int(hashlib.sha256(material.encode()).hexdigest()[:12], 16)
+        return [abs(int(seed)) & 0xFFFF_FFFF_FFFF, tag]
+
     def expand(self, topology: Topology, duration_s: float, seed: int) -> tuple[TimelineEvent, ...]:
         """The concrete events this disturbance becomes on *this* topology.
 
@@ -327,7 +347,7 @@ class Disturbance:
         want = max(0, min(total, want))
         if want == 0:
             return ()
-        rng = np.random.default_rng([seed, want, int(at_s * 1000), len(self.kind)])
+        rng = np.random.default_rng(self._entropy(seed, at_s, want))
         picked = sorted(int(i) for i in rng.choice(total, size=want, replace=False))
         field_name = "link" if draws == "links" else "as_"
         return tuple(
@@ -387,6 +407,16 @@ class Scenario:
                 f"identity_policy must be one of {list(IDENTITY_POLICIES)}, "
                 f"not {self.identity_policy!r}"
             )
+        if self.seed < 0:
+            # Caught here rather than where it lands. A negative seed reached
+            # ``np.random.default_rng`` in three unrelated places -- topology
+            # generation, the host population, a disturbance's draw -- and each
+            # raised "expected non-negative integer" from inside numpy, naming
+            # neither the field nor the scenario. Refused rather than folded to
+            # its absolute value: a seed is the identity of a world, and quietly
+            # giving -42 and 42 the same one makes two runs that were meant to
+            # differ compare as though they agreed.
+            raise ValueError(f"seed must not be negative, got {self.seed}")
         if self.duration_s <= 0.0:
             raise ValueError("duration must be positive")
         if not 0.0 < self.step_s <= self.duration_s:

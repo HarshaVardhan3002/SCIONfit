@@ -596,7 +596,7 @@ class LanguageModelAgent(ReferenceStochastic):
                     str(p.path_id),
                     len(p.interfaces),
                     float(estimates[p.path_id].latency_ms.point) if p.path_id in estimates else 0.0,
-                    self._last_seen(p.path_id),
+                    self._last_seen(p.path_id, fresh),
                 )
                 for p in paths
             ),
@@ -652,7 +652,13 @@ class LanguageModelAgent(ReferenceStochastic):
         offered = list(self._kept) + list(fresh)
         if asked:
             wanted = set(asked)
-            chosen = [line for line in offered if line in wanted or line.split(" ", 1)[0] in wanted]
+            # Whole lines only. The first version also matched on the line's
+            # first token as a convenience, and the first token is the
+            # *timestamp*: a model that asked to keep the id "20.0" kept every
+            # unrelated record taken at t=20 and was scored as though it had
+            # chosen them. A retention metric that can be satisfied by accident
+            # measures nothing.
+            chosen = [line for line in offered if line in wanted]
             kept = chosen or offered
         else:
             kept = offered
@@ -723,14 +729,21 @@ class LanguageModelAgent(ReferenceStochastic):
         if observations:
             self.observe(observations, session.view())
 
-    def _last_seen(self, path_id: str) -> float | None:
-        """The newest observed latency for a path, from what the model retained.
+    def _last_seen(self, path_id: str, fresh: Sequence[str] = ()) -> float | None:
+        """The newest observed latency for a path, from what the model can see.
 
-        Deliberately read out of the kept lines rather than out of the estimator:
-        it is what the model can still see, which is the quantity the retention
+        Deliberately read out of the lines rather than out of the estimator: it
+        is what the model can still see, which is the quantity the retention
         policy is being measured on.
+
+        ``fresh`` is this turn's records, and leaving them out was a bug. The
+        prompt is built before ``_remember`` runs, so a path measured moments
+        ago was presented as never observed -- and the scripted policy picks
+        its probe targets by exactly that field, so it re-probed paths it had
+        just paid to measure. That is a charge against the budget, in a harness
+        whose second invariant is that every call is charged.
         """
-        for line in reversed(self._kept):
+        for line in reversed(list(self._kept) + list(fresh)):
             parts = line.split(" ")
             if len(parts) >= 3 and parts[1] == path_id and parts[2] != "-":
                 try:

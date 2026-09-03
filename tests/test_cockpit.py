@@ -342,3 +342,90 @@ def test_two_runs_at_once_are_refused_rather_than_interleaved(tmp_path) -> None:
     cockpit.start(spec)
     with pytest.raises(RuntimeError, match="already going"):
         cockpit.start(spec)
+
+
+# ------------------------------------------------- what watching a run may cost
+
+
+def test_a_watched_round_does_not_walk_the_whole_log() -> None:
+    """Names the bug: ``_round_frame`` read the call count out of
+    ``session.summary()``, which walks the entire log twice. Once per decision
+    round that is quadratic in rounds -- measured at 2.5 ms on a 200-record log
+    and 42 ms on a 4,000-record one -- so watching a run would eventually cost
+    more than running it, which is exactly what invariant 3 forbids and what the
+    drop-on-backpressure channel was built to prevent.
+
+    Asserted by making the expensive call fatal rather than by timing it: a
+    wall-clock assertion in pytest is the thing ``CLAUDE.md`` says belongs in the
+    benchmark suite, and this is a structural claim anyway.
+    """
+    from scionarena.exposure import session as session_module
+
+    scenario = Scenario(name="w", seed=5, duration_s=400.0, topology=TopologySpec(tier="smoke"))
+    world = scenario.build()
+    frames: list[dict[str, object]] = []
+    calls = {"n": 0}
+    real = session_module.Session.summary
+
+    def counted(self: object) -> object:
+        calls["n"] += 1
+        return real(self)  # type: ignore[arg-type]
+
+    session_module.Session.summary = counted  # type: ignore[method-assign]
+    try:
+        run_loop(
+            load_model("ema"),
+            scenario,
+            busiest_scopes(world, 2),
+            config=LoopConfig(cycles=12, decision_s=10.0),
+            world=world,
+            on_round=frames.append,
+        )
+    finally:
+        session_module.Session.summary = real  # type: ignore[method-assign]
+
+    assert len(frames) == 12, "the lens still gets a frame per round"
+    assert calls["n"] <= 2, (
+        f"summary() ran {calls['n']} times for 12 rounds: the per-round frame is "
+        "walking the whole log again, which is quadratic in rounds"
+    )
+
+
+def test_the_estimate_scales_with_rounds_and_not_only_with_cells() -> None:
+    """Names the bug: ``estimate_s`` ignored ``cycles`` entirely, so it predicted
+    about 32 s for a 108-cell 90-round sweep that took roughly 250 s -- wrong by
+    8x, and wrong in the reassuring direction for anyone raising the round count,
+    which is the one direction a pre-run estimate must not be wrong in."""
+    assert estimate_s(10, "smoke", cycles=180) == pytest.approx(
+        10 * estimate_s(10, "smoke", cycles=18)
+    )
+    assert estimate_s(10, "smoke") < estimate_s(10, "dev") < estimate_s(10, "realistic")
+    assert estimate_s(8, "dev", workers=4) == pytest.approx(estimate_s(8, "dev") / 4)
+
+
+def test_the_form_estimate_uses_the_rounds_the_form_asked_for() -> None:
+    from scionarena.cockpit.app import plan_for
+
+    few = plan_for({"models": "ema", "tier": "smoke", "cycles": 10, "axes": "scenario"})
+    many = plan_for({"models": "ema", "tier": "smoke", "cycles": 200, "axes": "scenario"})
+    assert few["cells"] == many["cells"]
+    assert many["estimate_s"] > 10 * few["estimate_s"] * 0.9, (
+        "twenty times the rounds must not read as the same wait"
+    )
+
+
+def test_the_page_escapes_every_string_a_loaded_model_supplied() -> None:
+    """Names the bug: the page built table rows with ``innerHTML`` from
+    ``c.label``, ``c.architecture`` and ``m.name`` -- all of which come from
+    whoever wrote the model under test. A model whose declared name carried
+    markup ran it in the operator's browser. Served to localhost and to the
+    person who chose the model, so the blast radius is small; the fix is one
+    function, so the radius is not the argument."""
+    from scionarena.cockpit.app import _page
+
+    page = _page()
+    assert "const esc = " in page, "the page has no escaper"
+    for raw in ('"<tr><td>"+c.label+"', "${m.name}", "${m.family}", "+(c.architecture||"):
+        assert raw not in page, f"model-supplied string reaches innerHTML unescaped: {raw}"
+    for wrapped in ("esc(c.label)", "esc(m.name)", "esc(c.architecture"):
+        assert wrapped in page, f"expected {wrapped} in the rendered page"
