@@ -427,11 +427,14 @@ Four families, in this order. The order is by dependency, not by interest.
 1. **Classical baselines.** Persistence, EWMA, static-only, latest-sample, plus a
    gradient-boosted regressor. Cheap, and they are the bar — without them the LLM result
    has nothing to be measured against and means nothing.
-2. **LLM over an API, as a tool-using agent.** The headline comparison. `ToolUsingModel`
-   and `BudgetedProber` already exist, and the exposure layer already charges wall-clock
-   and probe budget, so the accounting is in place. What is missing is the adapter and the
-   context-management measurement that makes the comparison interesting: the harness never
-   summarises (invariant 1), so what the model chooses to retain is the experiment.
+2. **LLM over an API, as a tool-using agent — landed.** The headline comparison.
+   `LanguageModelAgent` owns the loop and delegates one decision per scope per turn to a
+   transport: `scripted` (deterministic, offline, what CI runs), `http` (a real model over
+   the Anthropic or OpenAI API, standard library only), `replay` (a recorded run, which is
+   what makes a paid run auditable by somebody with no key). The offline stand-in is tagged
+   `llm_scripted` rather than `llm_api` and can never share a report row with a real one.
+   What the model *kept* is measured through `report_state`, and the retention policy is a
+   constructor argument so the context-rot question is answerable by a sweep. See ADR 0024.
 3. **Local open-weight LLM.** Same tool-using path, different transport. Adds a serving
    dependency but makes cost-per-decision comparable without API spend, and makes the
    context-rot curve affordable to sweep.
@@ -603,7 +606,7 @@ therefore fair without being good. It gets named in the limits section next to t
 
 ---
 
-## Phase 6 — probes the review made possible
+## Phase 6 — probes the review made possible — **landed**
 
 **R4, re-aimed.** Q1 removes its original target: a model that collapses under
 `crypto_bound` is not wrong about deployment, because `crypto_bound` has no correspondent
@@ -648,7 +651,7 @@ more mappable than v1.0 was.
 
 ---
 
-## Phase 6½ — the flight has to be able to go wrong
+## Phase 6½ — the flight has to be able to go wrong — **landed**
 
 Pulled forward out of Phase 7, because a cockpit with no weather in it is a screensaver.
 
@@ -681,7 +684,7 @@ them. An aggregate is exactly the number a reader would quote.
 
 ---
 
-## Phase 7 — the cockpit
+## Phase 7 — the cockpit — **landed**
 
 The interface, and the reason the rest of the plan is shaped the way it is.
 
@@ -901,3 +904,53 @@ curve are the same instrument pointed at the same event log, and M8's own questi
 does a model choose to keep when nobody summarises for it — is one of the panels. What does
 change is that M8 stops being about agents specifically. It is about **watching any model
 fly**, and an LLM is one of four things in the cockpit.
+
+
+---
+
+## What landed after Phase 4, in order
+
+| phase | what | ADR |
+|---|---|---|
+| 5 (i) | the architecture tag, the drive, `adapt`, the worked adaptor | 0019, 0020 |
+| 5 (ii) | a decision costs what it takes to make (`think`) | 0021 |
+| 5 (iii) | `gbdt`, the fifth architecture, refitting inside the loop | — |
+| 5 (iv) | the language model, its transport seam, and what it kept | 0024 |
+| 6½ | the scenario axis, and `recovery` as a fifth family | 0022 |
+| 6 | R11, R12, R13, the intended/realised split, `docs/SPEC-MAP.md` | 0023 |
+| 7 | the cockpit: live channel, registry-driven panels, the lens | 0025 |
+
+### What Phase 5 has left
+
+**Item 3, a local open-weight model**, is now a one-line change rather than a phase:
+`HttpTransport(provider="openai", base_url="http://localhost:...")` reaches any
+OpenAI-compatible server, so what remains is a serving dependency and a measurement run,
+not code.
+
+**Item 4, the GNN nowcast and the DQN selector**, is untouched and is still the heaviest
+thing on the list. It needs torch and a training pipeline the harness deliberately does not
+have, since everything else here arrives pre-trained. The `gbdt` model is the shape the
+answer should take: fit inside the loop from its own observations, pay for the fit in
+simulated seconds, and report a profile rather than a rank.
+
+### Findings the phases produced
+
+Three, and each of them was invisible before the code that found it existed.
+
+**A model's own thinking was free.** `Session` took `charge_real_time` and `stopwatch` and
+read neither, so invariant 3 held for tool latency and not for compute — wrong in the
+direction that flatters a language model, which is the one direction a benchmark cannot
+afford.
+
+**A fault that never bit read as a flawless recovery.** The first recovery metric searched
+from the fault instant, found the still-undisturbed samples, and reported zero seconds. And
+an uncapped two-sigma band sat at three times the operating cost for an oscillating model,
+so a fault that tripled the cost never registered — the metric was silently useless for
+exactly the models it is most needed for.
+
+**Keeping the log made the language agent worse.** Smoke tier, ninety rounds, one world:
+`retain=none` scored regret 2.02 and swing 0.14; `retain=recent` scored 41.8 and 3.41. The
+mechanism is the one R11 was written for — with a memory it ranks on the freshest
+observation it has, which is lagged load, and it oscillates; with none it falls back to the
+declared latency and is stable. A probe and a metric family reached the same finding from
+different directions, which is the first time that has happened here.

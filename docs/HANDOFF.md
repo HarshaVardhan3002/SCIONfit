@@ -236,16 +236,33 @@ src/scionarena/
     replay.py  analytical.py  dqnsim.py  testbed.py
   instrument/
     sampler.py       samples off the world's clock, and the truth to score against
-    metrics.py       the registry: four families, plus a support count per family
+    metrics.py       the registry: five families, plus a support count per family
     detectors.py     swing, oscillation, flap, convergence
+    channel.py       the live channel: frames out, drops counted   (ADR 0025)
     report.py        the interactive HTML view, hand-written SVG, no dependency
     figures.py       the PDF's charts (matplotlib, [report] extra, imported lazily)
-  conformance/     probes, runner, report card      (M5)
-  bench/           axes, sweep, results, score, report  (M6)
-  gym/             gymnasium env, wrappers, vec     (M7)
-  agent/           LLM loop, memory + context tests (M8)
-  deploy/          production shim                  (M9)
+  reference/       the models we ship. imports exposure/contracts and nothing else
+    models.py        EMAOracle, MinRTTGreedy, CapacityProportional, ReferenceStochastic
+    baselines.py     the five 28 makes mandatory
+    agents.py        BudgetedProber, the agentic reference
+    trees.py         GradientBoosted, refitting in the loop     ([trees] extra)
+    layered.py       LayeredRanker, the model R11 fails         (ADR 0023)
+    llm.py           the language model and its transport seam  (ADR 0024)
+  conformance/     probes R1-R13, runner, report card    (M5)
+  bench/           axes, sweep, results, score, report   (M6)
+  gym/             gymnasium env, wrappers, vec          (M7)
+  agent/           LLM loop, memory + context tests      (M8)
+  deploy/          production shim                       (M9)
+  cockpit/         the interface, above every front-end  (ADR 0025)
+    panels.py        reads the four registries; holds no list of its own
+    app.py           the configurator, the lens, the raw log, one page
 ```
+
+The dependency direction is `core <- instrument <- exposure <- {front-ends} <- cockpit`,
+and import-linter proves it. The cockpit is the one layer above the front-ends: it reads
+every registry and runs the `bench` engine, and nothing may import it back. `channel.py`
+lives in `instrument` rather than in `cockpit` for exactly that reason -- `bench` writes to
+it, and a front-end may not import the interface that watches it.
 
 ### 4. The seams
 
