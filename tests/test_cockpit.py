@@ -460,3 +460,39 @@ def test_smoke_stays_serial_and_says_so() -> None:
     assert workers_for("smoke", 400) == 1
     assert workers_for("dev", 400) >= 1
     assert workers_for("dev", 1) == 1, "never more workers than there are cells"
+
+
+def test_a_run_that_would_score_nothing_says_so_before_it_starts() -> None:
+    """Names the bug, which was found by running the thing rather than reading it:
+    the console accepted 40 rounds, ran 42 cells in 37 s, reported "42/42, 0
+    failures", and returned a results table in which ``regret_ratio`` was not
+    merely null but *absent*, ``swing`` was 0.000 for every model and
+    ``n_cost_samples`` was 0. Every round had fallen inside the warmup.
+
+    ``SweepSpec.cycles`` already documented the hazard -- "below about a hundred
+    this suite silently measures nothing" -- but the console exposes ``cycles``
+    as a form field, and nobody about to make that mistake reads a docstring.
+    Said rather than refused: somebody may deliberately want a run that scores
+    nothing, and a console that overrides an operator is worse than one that
+    warns them."""
+    from scionarena.cockpit.app import plan_for
+
+    dead = plan_for({"models": "ema", "tier": "smoke", "cycles": 40, "axes": "scenario"})
+    assert dead["measured"] == 0
+    assert "scores nothing" in dead["warning"]
+
+    thin = plan_for({"models": "ema", "tier": "smoke", "cycles": 60, "axes": "scenario"})
+    assert 0 < thin["measured"] < 40
+    assert "warmup" in thin["warning"], "a short band is still worth a word"
+
+    fine = plan_for({"models": "ema", "tier": "smoke", "cycles": 120, "axes": "scenario"})
+    assert fine["measured"] >= 40
+    assert fine["warning"] == "", "the default must not nag"
+
+
+def test_the_warning_reaches_the_page() -> None:
+    from scionarena.cockpit.app import _page
+
+    page = _page()
+    assert 'id="warn"' in page, "nothing renders the warning"
+    assert "d.warning" in page, "the page never reads it"

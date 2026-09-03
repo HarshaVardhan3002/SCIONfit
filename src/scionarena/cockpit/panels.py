@@ -33,10 +33,18 @@ from typing import Any
 
 from ..bench.axes import AXES
 from ..conformance.probes import ALL_PROBES
+from ..instrument.detectors import warmup_samples
 from ..instrument.metrics import FAMILIES, REGISTRY
 from ..reference.baselines import MANDATORY_BASELINES
 
-__all__ = ["catalogue", "selection", "estimate_s", "workers_for", "TIER_COST_S"]
+__all__ = [
+    "catalogue",
+    "selection",
+    "estimate_s",
+    "workers_for",
+    "measured_samples",
+    "TIER_COST_S",
+]
 
 #: Measured seconds per cell per tier **per decision round**, on one core of the
 #: machine this was recorded on. A constant rather than a model: the point is to
@@ -155,6 +163,25 @@ def selection(
             "axes": [a for a in AXES if a not in chosen_axes],
         },
     }
+
+
+def measured_samples(cycles: int, decision_s: float, sample_s: float = 0.0) -> int:
+    """Samples left after the warmup. The number of rounds that get scored.
+
+    ``SweepSpec.cycles`` already carries the warning -- "below about a hundred
+    this suite silently measures nothing, which is worse than measuring it
+    slowly", with 40 rounds giving a swing of 0.00 against 120 giving 2.79 for
+    the same flapping model. That is in a docstring, and the console exposes
+    ``cycles`` as a form field, so nobody about to make the mistake will read it.
+
+    Measured, not asserted: a 42-cell run at 40 rounds completed in 37 s,
+    reported "42/42, 0 failures", and returned a results table in which
+    ``regret_ratio`` was not merely null but *absent*, ``swing`` was 0.000 for
+    every model, and ``n_cost_samples`` was 0. A console that will fly that
+    without saying so is not an instrument.
+    """
+    sample = sample_s or decision_s or 1.0
+    return max(0, cycles - warmup_samples(sample, decision_s or sample))
 
 
 def workers_for(tier: str, cells: int) -> int:

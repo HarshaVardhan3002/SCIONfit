@@ -49,7 +49,8 @@ from ..bench.axes import AXES, baseline_cell
 from ..bench.results import load_results
 from ..bench.sweep import SweepSpec, plan, run_sweep
 from ..instrument.channel import FrameLog
-from .panels import catalogue, estimate_s, selection, workers_for
+from ..instrument.detectors import WARMUP
+from .panels import catalogue, estimate_s, measured_samples, selection, workers_for
 
 __all__ = ["main", "serve", "Cockpit", "Run", "plan_for"]
 
@@ -251,6 +252,7 @@ th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);
 th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 .scroll{overflow:auto;max-height:320px}
 .omit{color:var(--warn);font-size:12px;margin-top:8px}
+.warn{color:var(--bad);border-left:2px solid var(--bad);padding:6px 0 6px 9px;margin-top:8px;font-size:12px;line-height:1.45}
 .gap{color:var(--bad)}
 .pill{display:inline-block;padding:1px 7px;border-radius:9px;border:1px solid var(--line);
       font-size:11px;color:var(--dim)}
@@ -284,6 +286,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word}
       </div>
       <div class="hint" id="plan">—</div>
       <div class="omit" id="omit"></div>
+      <div class="warn" id="warn" style="display:none"></div>
     </div>
     <div class="card" style="margin-top:16px">
       <h2>Registry</h2>
@@ -342,6 +345,9 @@ async function refreshPlan(){
   if(o.families.length) bits.push(o.families.length+" families not scored ("+o.families.join(", ")+")");
   if(o.axes.length) bits.push(o.axes.length+" axes held at baseline ("+o.axes.join(", ")+")");
   $("omit").textContent = bits.length ? "This run will not cover: " + bits.join("; ") : "";
+  const w = $("warn");
+  w.textContent = d.warning || "";
+  w.style.display = d.warning ? "block" : "none";
 }
 
 function renderCatalogue(c){
@@ -462,6 +468,28 @@ def _page() -> str:
 # the server
 
 
+def _thin(scored: int, cycles: int) -> str:
+    """What to say about a run whose measured band is short, or is not there.
+
+    Said rather than refused. Somebody may deliberately want a smoke run that
+    scores nothing -- checking a model loads, watching the lens move -- and a
+    console that refuses an operator's explicit choice is worse than one that
+    tells them what it is about to do. But it has to tell them.
+    """
+    if scored <= 0:
+        return (
+            f"This run scores nothing: all {cycles} rounds fall inside the warmup, so the "
+            "decision family will be absent and swing will read 0.00 for every model. "
+            "Raise rounds above 100."
+        )
+    if scored < WARMUP:
+        return (
+            f"Only {scored} of {cycles} rounds are scored; the rest is warmup. Stability "
+            "figures are unreliable on a band this short."
+        )
+    return ""
+
+
 def plan_for(form: dict[str, Any]) -> dict[str, Any]:
     """What this form would cost, answered before anybody commits to it.
 
@@ -476,9 +504,12 @@ def plan_for(form: dict[str, Any]) -> dict[str, Any]:
     cells = len(plan(spec))
     workers = workers_for(spec.tier, cells)
     seconds = estimate_s(cells, spec.tier, workers=workers, cycles=spec.cycles)
+    scored = measured_samples(spec.cycles, spec.decision_s)
     return {
         "cells": cells,
         "workers": workers,
+        "measured": scored,
+        "warning": _thin(scored, spec.cycles),
         "estimate_s": round(seconds, 1),
         "estimate": _human(seconds),
         "omitted": chose["omitted"],
