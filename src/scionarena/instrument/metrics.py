@@ -32,6 +32,7 @@ from .sampler import Series
 
 __all__ = [
     "FAMILIES",
+    "SHAPES",
     "Forecast",
     "Metric",
     "MetricInput",
@@ -155,6 +156,13 @@ class Metric:
     #: over-confident model top. Carried because guessing from the name is how
     #: "coverage" gets sorted backwards.
     higher_is_better: bool | None = False
+    #: How a report or an interface should draw it: ``scalar`` for one number,
+    #: ``stratified`` for a mapping flattened into ``name.key``. Declared rather
+    #: than inferred, because a metric returning a mapping on one run and a
+    #: float on the next would leave an interface with one renderer and two
+    #: shapes and nothing saying which (ADR 0025). One renderer per shape, and
+    #: no per-metric layout code anywhere.
+    shape: str = "scalar"
     #: A *count*, not a score: how many observations the metrics of this family
     #: were computed over. Registered through the same decorator so it lands on
     #: every cell without the runner learning its name, and flagged so a report
@@ -165,8 +173,16 @@ class Metric:
 REGISTRY: dict[str, Metric] = {}
 
 
+SHAPES = ("scalar", "stratified")
+
+
 def metric(
-    name: str, family: str, *, higher_is_better: bool | None = False, support: bool = False
+    name: str,
+    family: str,
+    *,
+    higher_is_better: bool | None = False,
+    support: bool = False,
+    shape: str = "scalar",
 ) -> Callable[[Callable[[MetricInput], Any]], Callable[[MetricInput], Any]]:
     """Register a metric. The runner never enumerates names.
 
@@ -177,6 +193,8 @@ def metric(
     def wrap(fn: Callable[[MetricInput], Any]) -> Callable[[MetricInput], Any]:
         if family not in FAMILIES:
             raise ValueError(f"unknown family {family!r}; the families are {list(FAMILIES)}")
+        if shape not in SHAPES:
+            raise ValueError(f"unknown shape {shape!r}; the shapes are {list(SHAPES)}")
         if name in REGISTRY:
             raise ValueError(f"metric {name!r} is already registered by {REGISTRY[name].fn}")
         REGISTRY[name] = Metric(
@@ -186,6 +204,7 @@ def metric(
             fn=fn,
             higher_is_better=higher_is_better,
             support=support,
+            shape=shape,
         )
         return fn
 
@@ -255,7 +274,7 @@ def _by_horizon(data: MetricInput) -> dict[str, list[tuple[Forecast, float]]]:
 # ==========================================================================
 
 
-@metric("pinball", "accuracy")
+@metric("pinball", "accuracy", shape="stratified")
 def pinball(data: MetricInput) -> Mapping[str, float] | None:
     """Mean pinball loss over the predicted quantiles, per horizon."""
     strata = _by_horizon(data)
@@ -273,7 +292,7 @@ def pinball(data: MetricInput) -> Mapping[str, float] | None:
     return out or None
 
 
-@metric("crps", "accuracy")
+@metric("crps", "accuracy", shape="stratified")
 def crps(data: MetricInput) -> Mapping[str, float] | None:
     """Continuous ranked probability score, approximated from the quantiles held.
 
@@ -302,7 +321,7 @@ def crps(data: MetricInput) -> Mapping[str, float] | None:
     return out or None
 
 
-@metric("coverage", "accuracy", higher_is_better=True)
+@metric("coverage", "accuracy", higher_is_better=True, shape="stratified")
 def coverage(data: MetricInput) -> Mapping[str, float] | None:
     """Fraction of outcomes inside the model's own interval, per horizon.
 
@@ -325,7 +344,7 @@ def coverage(data: MetricInput) -> Mapping[str, float] | None:
     return out or None
 
 
-@metric("coverage_gap", "accuracy", higher_is_better=None)
+@metric("coverage_gap", "accuracy", higher_is_better=None, shape="stratified")
 def coverage_gap(data: MetricInput) -> Mapping[str, float] | None:
     """Signed distance from nominal coverage. Negative is over-confident."""
     measured = coverage(data)
@@ -334,7 +353,7 @@ def coverage_gap(data: MetricInput) -> Mapping[str, float] | None:
     return {k: float(v) - NOMINAL for k, v in measured.items()}
 
 
-@metric("interval_width", "accuracy")
+@metric("interval_width", "accuracy", shape="stratified")
 def interval_width(data: MetricInput) -> Mapping[str, float] | None:
     """Mean width of the predicted interval, in ms. Read beside ``coverage``."""
     strata = _by_horizon(data)
@@ -352,7 +371,7 @@ def interval_width(data: MetricInput) -> Mapping[str, float] | None:
     return out or None
 
 
-@metric("conformal_drift", "accuracy")
+@metric("conformal_drift", "accuracy", shape="stratified")
 def conformal_drift(data: MetricInput) -> Mapping[str, float] | None:
     """How far adaptive conformal had to move alpha to hold nominal coverage.
 
@@ -604,7 +623,7 @@ def grid_uniform(data: MetricInput) -> float | None:
 # twelve observations of anything.
 
 
-@metric("n_scored", "accuracy", higher_is_better=True, support=True)
+@metric("n_scored", "accuracy", higher_is_better=True, support=True, shape="stratified")
 def n_scored(data: MetricInput) -> Mapping[str, float] | None:
     """Forecasts that had a truth to be scored against, per horizon.
 

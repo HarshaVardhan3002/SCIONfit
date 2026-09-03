@@ -85,12 +85,15 @@ ignore_missing_imports = true
 [tool.importlinter]
 root_package = "scionarena"
 
-# core <- exposure <- {conformance, bench, gym, agent, deploy}
-# Front-ends are siblings: none of them may import another.
+# core <- instrument <- exposure <- {conformance, bench, gym, agent, deploy} <- cockpit
+# Front-ends are siblings: none of them may import another. The cockpit is the
+# one thing above them all -- it reads every registry and runs the bench engine,
+# and nothing may import it back (ADR 0025).
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
 layers = [
+  "scionarena.cockpit",
   "scionarena.conformance : scionarena.bench : scionarena.gym : scionarena.agent : scionarena.deploy",
   "scionarena.exposure",
   "scionarena.instrument",
@@ -103,7 +106,12 @@ layers = [
 name = "Models never reach into the substrate"
 type = "forbidden"
 source_modules = ["scionarena.reference"]
-forbidden_modules = ["scionarena.core", "scionarena.backends", "scionarena.conformance"]
+forbidden_modules = [
+  "scionarena.core",
+  "scionarena.backends",
+  "scionarena.conformance",
+  "scionarena.cockpit",
+]
 
 # M2, ADR 0008. The module a model imports has no edge into the substrate at
 # all -- which is why the agentic entry point takes a SessionLike protocol
@@ -137,4 +145,5 @@ forbidden_modules = [
   "scionarena.deploy",
   "scionarena.instrument",
   "scionarena.reference",
+  "scionarena.cockpit",
 ]

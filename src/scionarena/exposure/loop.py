@@ -435,6 +435,10 @@ def run_loop(
     host_params: HostParams | None = None,
     world: Substrate | None = None,
     on_cycle: Callable[[int, int], None] | None = None,
+    #: Called once per decision round with a plain dict of that round's own
+    #: numbers (ADR 0025). The live channel's only hook into the loop; strictly
+    #: downstream of the turn, and nothing it is given reaches the model.
+    on_round: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> LoopResult:
     """Run one model over one scenario for ``cycles`` decision rounds.
 
@@ -519,6 +523,8 @@ def run_loop(
     result.series = sampler.series
     # Attached after calibration, so the throwaway rounds are not in the series,
     # and the grid is anchored where the episode starts.
+    calls_before = int(session.summary()["calls"])
+    records_before = len(session.log)
     with sampler:
         deadline = session.now + cadence
         for cycle in range(cfg.cycles):
@@ -542,16 +548,71 @@ def run_loop(
             # The samples were taken by the tap while the above ran. All that is
             # left per round is the latency of the advice this round published,
             # which is a property of the decision and not of the world.
-            fresh = [a["latency_s"] for a in session.advisories[published:]]
+            published_now = session.advisories[published:]
+            fresh = [a["latency_s"] for a in published_now]
             result.latency_s.append(float(np.mean(fresh)) if fresh else 0.0)
             deadline += cadence
             if on_cycle is not None:
                 on_cycle(cycle + 1, cfg.cycles)
+            if on_round is not None:
+                # Strictly downstream of the turn and built only from numbers the
+                # round already computed (ADR 0025). Nothing here reaches the
+                # model, and a watched run and an unwatched one produce the same
+                # trace -- which ``tests/test_cockpit.py`` asserts rather than
+                # assumes.
+                on_round(
+                    _round_frame(
+                        session, result, cycle, published_now, calls_before, records_before
+                    )
+                )
+            calls_before = int(session.summary()["calls"])
+            records_before = len(session.log)
     result.wall_clock_s = time.perf_counter() - started
     result.session_summary = session.summary()
     result.hosts_summary = world.hosts.summary()
     result.model_report = _model_report(model)
     return result
+
+
+def _round_frame(
+    session: Session,
+    result: LoopResult,
+    cycle: int,
+    published: Sequence[Mapping[str, Any]],
+    calls_before: int,
+    records_before: int,
+) -> dict[str, Any]:
+    """One decision round as three aligned deltas: shown, did, world did back.
+
+    That alignment is the lens. It needs no new instrumentation because
+    invariant 1 already requires the unsummarised log to exist; what it needed
+    was a channel, and this is the shape that goes down it.
+
+    Advisory weights are carried for at most two scopes. A realistic-tier round
+    publishes a hundred, and a frame that carried them all would make the
+    channel the slowest thing in the loop -- which is precisely the failure the
+    drop-on-backpressure design exists to avoid, arriving through the front door.
+    """
+    series = result.series
+    weights = {
+        f"{a['src']}->{a['dst']}": {k: round(float(v), 4) for k, v in a["weights"].items()}
+        for a in published[:2]
+    }
+    return {
+        "t": round(session.now, 3),
+        "latency_s": round(result.latency_s[-1] if result.latency_s else 0.0, 4),
+        "advisories": len(published),
+        "max_weight": round(
+            max((max(a["weights"].values(), default=0.0) for a in published), default=0.0), 4
+        ),
+        "calls": max(0, int(session.summary()["calls"]) - calls_before),
+        "records": max(0, len(session.log) - records_before),
+        "mean_cost_ms": round(series.mean_cost_ms[-1] if series.mean_cost_ms else 0.0, 3),
+        "best_cost_ms": round(series.best_cost_ms[-1] if series.best_cost_ms else 0.0, 3),
+        "deviation": round(series.deviation[-1] if series.deviation else 0.0, 4),
+        "weights": weights,
+        "cycle": cycle,
+    }
 
 
 def _model_report(model: PathModel) -> dict[str, float]:

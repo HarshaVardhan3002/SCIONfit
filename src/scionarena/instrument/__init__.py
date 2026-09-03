@@ -37,6 +37,10 @@ from scionarena.instrument.metrics import (
 from scionarena.instrument.sampler import Sampler, Series, path_name
 
 __all__ = [
+    "DEFAULT_DEPTH",
+    "Frame",
+    "FrameLog",
+    "LiveChannel",
     "FAMILIES",
     "FAST_BAND_MAX_ROUNDS",
     "FAST_BAND_MIN",

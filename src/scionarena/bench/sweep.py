@@ -35,6 +35,7 @@ from ..core.scenario import ProbeLimits, Scenario, TopologySpec
 from ..core.trace import TraceHash
 from ..exposure.loading import ModelLoadError, load_model, resolve
 from ..exposure.loop import LoopConfig, busiest_scopes, resolve_drive, run_loop
+from ..instrument.channel import LiveChannel
 from ..reference.baselines import MANDATORY_BASELINES
 from .axes import AXES, baseline_cell, settings_for, timeline_for
 from .results import REFUSED, CellResult, cell_id, cell_seed, load_results, write_result
@@ -355,13 +356,18 @@ def _declared(model: Any) -> dict[str, Any]:
     return out
 
 
-def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
+def run_cell(spec: SweepSpec, cell: Cell, *, watch: Any | None = None) -> CellResult:
     """Run one cell to a result. Never raises for a model's own failure.
 
     A model that raises, a budget that starves, a scenario with no multi-path
     scope: each is written down with ``error`` set and the sweep carries on. A
     sweep that died on the first of those would throw away every cell that had
     already run, and the failure is itself a finding about the model.
+
+    ``watch`` is a queue the live channel writes frames to (ADR 0025). It is
+    write-only, it drops rather than blocks, and a cell run with one produces
+    the same trace as a cell run without -- which is asserted in
+    ``tests/test_cockpit.py`` rather than assumed.
     """
     ident, seed = cell.identity(spec.name)
     scenario = _scenario(spec, cell, seed)
@@ -403,7 +409,19 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
                 f"no scope in the {spec.tier} tier has two paths to choose between, "
                 "so no model could differ from any other here"
             )
-        loop = run_loop(model, scenario, scopes, config=config, world=world)
+        channel = LiveChannel(watch)
+        loop = run_loop(
+            model,
+            scenario,
+            scopes,
+            config=config,
+            world=world,
+            on_round=(
+                (lambda frame: channel.emit(ident, result.label, **dict(frame)))
+                if channel.live
+                else None
+            ),
+        )
         result.drive = loop.drive
         result.think = loop.think
         # The report card is M3's fixed set and stays fixed so an old result
@@ -417,10 +435,10 @@ def run_cell(spec: SweepSpec, cell: Cell) -> CellResult:
     return result
 
 
-def _worker(payload: tuple[SweepSpec, Cell, str]) -> tuple[str, str | None]:
+def _worker(payload: tuple[SweepSpec, Cell, str, Any]) -> tuple[str, str | None]:
     """Pool entry point. Writes its own file so nothing large is pickled back."""
-    spec, cell, directory = payload
-    result = run_cell(spec, cell)
+    spec, cell, directory, watch = payload
+    result = run_cell(spec, cell, watch=watch)
     write_result(Path(directory), result)
     return result.cell_id, result.error
 
@@ -440,6 +458,7 @@ def run_sweep(
     resume: bool = True,
     on_cell: Callable[[int, int, str, str | None], None] | None = None,
     cells: Iterable[Cell] | None = None,
+    watch: Any | None = None,
 ) -> list[CellResult]:
     """Run a suite into a directory and return everything it now holds.
 
@@ -459,12 +478,12 @@ def run_sweep(
         limit = workers if workers is not None else min(len(todo), (os.cpu_count() or 2))
         if limit <= 1:
             for index, cell in enumerate(todo, start=1):
-                result = run_cell(spec, cell)
+                result = run_cell(spec, cell, watch=watch)
                 write_result(directory, result)
                 if on_cell is not None:
                     on_cell(index, total, result.cell_id, result.error)
         else:
-            payloads = [(spec, cell, str(directory)) for cell in todo]
+            payloads = [(spec, cell, str(directory), watch) for cell in todo]
             with ProcessPoolExecutor(max_workers=limit) as pool:
                 futures = [pool.submit(_worker, p) for p in payloads]
                 for index, future in enumerate(as_completed(futures), start=1):

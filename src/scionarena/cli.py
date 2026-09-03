@@ -22,6 +22,7 @@ FRONTENDS = {
     "bench": "score a model across every axis, against the mandatory baselines",
     "demo": "run two models over one scenario and render what they did",
     "ui": "the same, from a browser, with the knobs exposed",
+    "cockpit": "watch a sweep while it happens: the lens, the registries, the bad day",
     "models": "load a model and print what it declares, without running anything",
     "adapt": "call a model against synthetic input and say what would break, in seconds",
 }
@@ -67,6 +68,11 @@ def main(argv: list[str] | None = None) -> int:
         from .ui import main as ui_main
 
         return ui_main(rest)
+
+    if frontend == "cockpit":
+        from .cockpit.app import main as cockpit_main
+
+        return cockpit_main(rest)
 
     from .conformance.cli import main as conformance_main
 
