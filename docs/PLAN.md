@@ -954,3 +954,49 @@ mechanism is the one R11 was written for — with a memory it ranks on the fresh
 observation it has, which is lagged load, and it oscillates; with none it falls back to the
 declared latency and is stable. A probe and a metric family reached the same finding from
 different directions, which is the first time that has happened here.
+
+### The adversarial rounds, and what they cost
+
+Two hostile reviews of the phase 5-7 code, twenty claims between them, thirteen confirmed
+and seven withdrawn. Every claim was reproduced by a script before anything changed, and
+every fix ships a test that names the bug. The seven withdrawals matter as much as the
+confirmations: a review that confirms everything it suspects has measured nothing.
+
+**Round one** was meant to be two subagents. Both died on `rate_limit` (HTTP 429) before
+producing findings, so their briefs were executed directly. Seven confirmed
+(commit `c62c267`): a per-round frame that walked the whole log and was quadratic in rounds;
+`_last_seen` blind to the current turn, so the agent re-probed what it had already paid for;
+`_remember` matching a requested id against the line's timestamp; `Disturbance.expand`
+seeding on `len(kind)` so two disturbances drew identical links; a negative seed dying inside
+numpy three modules from the seed; unescaped `innerHTML` from model-supplied strings; and an
+estimate that ignored `cycles`.
+
+**Round two** was one reviewer on Sonnet 5, briefed against the newest code *including round
+one's fixes*, and required to withdraw anything it could not reproduce. Six confirmed
+(commit `4c48845`, ADR 0026 for the three that were decisions). Two were worse than reported:
+the zero-estimate defect in `ScriptedTransport` is not about an unphysical 0 ms path but
+about **any path the predictor produced nothing for**, which the policy then deleted from the
+split so it was never observed; and `n_faults` broke this file's own tier-portability rule
+from inside the metric rather than the axis.
+
+**One finding was self-inflicted and the gate caught it.** The R13 fix registered
+`FrozenConformal` in `REFERENCE_MODELS`, which is what `tests/test_trace.py` folds, moving
+the pinned conformance hash. `models.py` already stated that convention one screen above the
+edited line. It lives in `BUILTIN_MODELS` now, and invariant 6 is satisfied for R11, R12 and
+R13 by three different mechanisms - a constructor flag, a by-design non-blocking grade, and a
+catalogue entry. A fourth probe needing a fourth mechanism would be a smell.
+
+### What the round-two fixes moved, measured
+
+Re-running the identical 108-cell sweep across the fixes is the only honest way to state
+their reach. Out of 108 cells: `mean_deviation` moved in 85, `n_faults` in 72,
+`time_to_recover_s` in 4. Regret, swing, coverage, decision latency, `recovered`,
+`recovered_to` and `cost_during_recovery` moved in none.
+
+Two readings. The recovery anchor was surgical: only four cells schedule two disturbances
+where the first drew links nothing was using, and only the time-to-recover figure depends on
+the anchor. And the `ScriptedTransport` fix **changed nothing in this sweep** - the agent's
+predictor covers every path it is shown, so the zero never arose. The defect is real and
+reachable; the reproduction is the evidence for it and the sweep is not. Numbers recorded
+before either commit are not comparable with numbers recorded after, because round one's
+disturbance-seed fix re-drew which links fail.
