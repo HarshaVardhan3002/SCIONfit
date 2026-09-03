@@ -254,8 +254,21 @@ class ScriptedTransport:
         affordable = self.probes if prompt.probes_left == float("inf") else int(prompt.probes_left)
         want = max(0, min(self.probes, len(order), affordable))
         estimates = {p[0]: (p[3] if p[3] is not None else p[2]) for p in prompt.paths}
-        best = min(estimates.values()) or 1.0
-        weights = {pid: (best / v) ** self.sharpness for pid, v in estimates.items() if v > 0}
+        # A non-positive estimate means "no estimate", not "free". The prompt
+        # carries 0.0 for any path the model's own predictor produced nothing
+        # for, and the first version of this line wrote ``min(...) or 1.0`` --
+        # which reads a true minimum of zero as falsy -- and then filtered on
+        # ``v > 0``, so the unestimated path was dropped from the split
+        # entirely. A path that never carries traffic is never observed, so the
+        # policy quietly made its own blind spot permanent. Unknown paths are
+        # weighted as the worst known one instead: cautious, but still reachable.
+        known = [v for v in estimates.values() if v > 0.0]
+        best = min(known) if known else 1.0
+        worst = max(known) if known else 1.0
+        weights = {
+            pid: (best / (v if v > 0.0 else worst)) ** self.sharpness
+            for pid, v in estimates.items()
+        }
         keep = tuple(line for line in (prompt.kept + prompt.fresh))[-len(prompt.paths) * 2 :]
         return Turn(
             probe=tuple(p[0] for p in order[:want]),

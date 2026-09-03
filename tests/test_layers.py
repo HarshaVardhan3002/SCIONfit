@@ -248,3 +248,24 @@ def test_the_matrix_still_discriminates() -> None:
     }
     rows = {name: tuple(r.status.value for r in card.results) for name, card in cards.items()}
     assert len(set(rows.values())) == len(rows), "three models, three different report cards"
+
+
+def test_a_shipped_model_fails_r13_not_only_a_model_defined_in_this_file() -> None:
+    """Names the gap: invariant 6 says every probe ships with a reference model
+    that fails it, and R13's only failing model was a subclass defined inside
+    this test overriding a class constant no constructor exposes. A reviewer
+    asking what failing R13 looks like had nothing in the catalogue to point at,
+    and a probe whose failing case exists only in the test asserting it is a
+    probe nobody can independently check."""
+    from scionarena.exposure.loading import BUILTIN_MODELS, load_model
+    from scionarena.reference.models import REFERENCE_MODELS
+
+    assert "frozen" in BUILTIN_MODELS, "the failing model must be loadable by name"
+    assert "frozen" not in REFERENCE_MODELS, (
+        "and must not be in the registry the pinned trace folds, or its "
+        "deliberate FAIL reads as a regression on every future diff"
+    )
+    outcomes = [_r13(load_model("frozen"), seed).status for seed in range(12)]
+    assert Status.FAIL in outcomes, outcomes
+    clean = [_r13(load_model("reference"), seed).status for seed in range(12)]
+    assert Status.FAIL not in clean, clean

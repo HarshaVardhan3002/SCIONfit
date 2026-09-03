@@ -27,6 +27,7 @@ own copy, because a copy drifts and a drifted gloss is worse than none.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -35,7 +36,7 @@ from ..conformance.probes import ALL_PROBES
 from ..instrument.metrics import FAMILIES, REGISTRY
 from ..reference.baselines import MANDATORY_BASELINES
 
-__all__ = ["catalogue", "selection", "estimate_s", "TIER_COST_S"]
+__all__ = ["catalogue", "selection", "estimate_s", "workers_for", "TIER_COST_S"]
 
 #: Measured seconds per cell per tier **per decision round**, on one core of the
 #: machine this was recorded on. A constant rather than a model: the point is to
@@ -154,6 +155,24 @@ def selection(
             "axes": [a for a in AXES if a not in chosen_axes],
         },
     }
+
+
+def workers_for(tier: str, cells: int) -> int:
+    """How many processes a run of this shape will actually use.
+
+    Here, and not at each call site, because the estimate and the run read it
+    from the same place or they disagree. They did: the console showed 11.5 h
+    for a realistic sweep it was about to run on 32 cores, an over-estimate of
+    30x on the machine this was measured on -- past the order of magnitude the
+    estimate's own docstring claims as its bar, and in the direction that talks
+    an operator out of a run that would have finished over lunch.
+
+    Smoke stays serial on purpose: its cells are so short that pool startup
+    dominates them.
+    """
+    if tier == "smoke":
+        return 1
+    return max(1, min(max(1, cells), os.cpu_count() or 2))
 
 
 def estimate_s(cells: int, tier: str, workers: int = 1, cycles: int = 60) -> float:

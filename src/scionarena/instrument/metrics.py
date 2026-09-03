@@ -470,8 +470,14 @@ def mean_deviation(data: MetricInput) -> float | None:
     Sampling noise with a compliant population and something else without one.
     Not purely noise once any rung-3 knob is on (ADR 0015), so read it beside
     the axis the cell was run at.
+
+    Trimmed to the measured band like every other metric in this family, which
+    it was not until it was measured: the loop opens from a uniform split and
+    takes the warmup to converge, so an untrimmed mean reported 0.46 where the
+    steady-state figure was 0.02, sitting on the same report row as a
+    ``regret_ms`` that had already discarded exactly those samples.
     """
-    values = _finite(data.series.deviation)
+    values = _finite(data.series.deviation)[data.band["warmup"] :]
     return float(np.mean(values)) if values.size else None
 
 
@@ -717,10 +723,20 @@ _HOLD = 3
 _NOT_A_FAULT = frozenset({"advisory_apply"})
 
 
+def _fault_times(data: MetricInput) -> list[float]:
+    """Every moment a fault was scheduled, ascending, deduplicated.
+
+    Deduplicated because one declared ``Disturbance`` expands to one event per
+    link it drew -- a tenth of the realistic tier is a thousand events -- and
+    every one of them is the same incident at the same instant.
+    """
+    return sorted({t for t, kind in data.events if kind not in _NOT_A_FAULT})
+
+
 def _fault_at(data: MetricInput) -> float | None:
     """When the bad day started, or ``None`` if the run had no bad day."""
-    times = [t for t, kind in data.events if kind not in _NOT_A_FAULT]
-    return min(times) if times else None
+    times = _fault_times(data)
+    return times[0] if times else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -783,8 +799,20 @@ def _recovery_window(data: MetricInput) -> _Window | None:
     out = np.flatnonzero(np.isfinite(post) & (post > ceiling))
     if out.size == 0:
         return None
+    # The clock starts at the fault that *this* disturbance can be attributed
+    # to, which is the last one scheduled at or before the sample where the cost
+    # left its band -- not simply the earliest fault in the run. A scenario that
+    # schedules two disturbances, the first of which draws links nothing was
+    # using, otherwise charges the model for the quiet interval between them:
+    # measured at 13.0 s against a true 3.0 s on a two-fault series.
+    #
+    # The *baseline* deliberately still comes from before the first fault, which
+    # is provably quiet ground. Recomputing it from before the anchor would move
+    # the band, which moves the onset, which moves the anchor.
+    onset_t = float(times[after[int(out[0])]])
+    anchor = max((t for t in _fault_times(data) if t <= onset_t), default=at)
     return _Window(
-        at_s=at,
+        at_s=anchor,
         pre=pre,
         post=post,
         post_t0=float(times[after[0]]),
@@ -883,8 +911,18 @@ def recovered_to(data: MetricInput) -> float | None:
 
 @metric("n_faults", "recovery", higher_is_better=True, support=True)
 def n_faults(data: MetricInput) -> float | None:
-    """Scheduled events this run had. Zero is a steady cell, not a missing figure."""
-    return float(len([1 for _, kind in data.events if kind not in _NOT_A_FAULT]))
+    """Fault **incidents** this run had. Zero is a steady cell, not a missing figure.
+
+    An incident is one ``(instant, kind)``, not one timeline event. A declared
+    ``Disturbance`` expands to one event per link it drew, so counting events
+    made this number a function of the tier: the identical ``outage`` axis value
+    read 7 at smoke, 81 at dev and 1,001 at realistic. Since the support family
+    exists to be divided by -- "a report divides by these to decide how many
+    digits a value has earned" -- that turned the same declared bad day into
+    three different confidences, and an axis whose meaning depends on the tier
+    is not an axis.
+    """
+    return float(len({(t, kind) for t, kind in data.events if kind not in _NOT_A_FAULT}))
 
 
 # --------------------------------------------------------------------------

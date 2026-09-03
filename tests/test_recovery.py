@@ -408,3 +408,57 @@ def test_the_draw_is_still_the_same_draw_twice() -> None:
         return [int(e.params["link"]) for e in scenario.build().timeline]
 
     assert links() == links()
+
+
+# ------------------------------------------- what a fault is, and when it fired
+
+
+def test_one_declared_disturbance_is_one_incident_at_every_tier() -> None:
+    """Names the bug: ``n_faults`` counted timeline events, and one declared
+    ``Disturbance`` expands to one event per link it drew. The identical
+    ``outage`` axis value therefore reported 7 incidents at smoke, 81 at dev and
+    1,001 at realistic -- and the support family exists to be divided by, so the
+    same declared bad day carried three different confidences."""
+    from scionarena.instrument.metrics import MetricInput as MI
+    from scionarena.instrument.sampler import Series as S
+
+    outage = next(v for v in AXES["scenario"].values if v.label == "outage").disturbances
+    seen = {}
+    for tier in ("smoke", "dev"):
+        world = Scenario(
+            name="n",
+            seed=3,
+            duration_s=600.0,
+            topology=TopologySpec(tier=tier),
+            disturbances=outage,
+        ).build()
+        events = [(e.at_s, e.kind) for e in world.timeline]
+        seen[tier] = compute(MI(series=S(interval_s=1.0), events=events), families=["recovery"])[
+            "n_faults"
+        ]
+        assert len(events) > seen[tier], "the fixture must expand to many events per incident"
+    assert seen["smoke"] == seen["dev"] == 2.0, seen
+
+
+def test_the_recovery_clock_starts_at_the_fault_that_did_the_damage() -> None:
+    """Names the bug: the window anchored on ``min(fault times)``, so a scenario
+    whose first disturbance drew links nothing was using charged the model for
+    the quiet interval before the fault that actually hurt. Measured at 13.0 s
+    against a true 3.0 s."""
+    cost = [10.0] * 25 + [40.0, 40.0, 40.0] + [10.0] * 20
+    series = Series(interval_s=1.0)
+    series.times = [float(i) for i in range(len(cost))]
+    series.mean_cost_ms = cost
+
+    quiet_then_real = compute(
+        MetricInput(series=series, events=[(15.0, "link_degrade"), (25.0, "link_degrade")]),
+        families=["recovery"],
+    )
+    real_only = compute(
+        MetricInput(series=series, events=[(25.0, "link_degrade")]), families=["recovery"]
+    )
+    assert real_only["time_to_recover_s"] == pytest.approx(3.0)
+    assert quiet_then_real["time_to_recover_s"] == real_only["time_to_recover_s"], (
+        "an earlier fault that disturbed nothing is inflating the recovery time"
+    )
+    assert quiet_then_real["n_faults"] == 2.0, "both incidents are still counted"

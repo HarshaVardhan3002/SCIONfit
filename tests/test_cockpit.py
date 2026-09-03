@@ -429,3 +429,34 @@ def test_the_page_escapes_every_string_a_loaded_model_supplied() -> None:
         assert raw not in page, f"model-supplied string reaches innerHTML unescaped: {raw}"
     for wrapped in ("esc(c.label)", "esc(m.name)", "esc(c.architecture"):
         assert wrapped in page, f"expected {wrapped} in the rendered page"
+
+
+def test_the_estimate_uses_the_workers_the_run_will_actually_use() -> None:
+    """Names the bug: ``plan_for`` estimated on one core while ``Cockpit._go``
+    handed the sweep the whole machine. On a 32-core box the console offered
+    '11.5 h' for a realistic sweep that would have taken about 22 minutes --
+    wrong by 30x, past the order of magnitude the estimate's own docstring claims
+    as its bar, and in the direction that talks an operator out of a run."""
+    from scionarena.cockpit.app import plan_for
+    from scionarena.cockpit.panels import estimate_s, workers_for
+
+    d = plan_for({"models": "ema", "tier": "dev", "cycles": 60, "axes": "scenario"})
+    workers = workers_for("dev", d["cells"])
+    assert d["workers"] == workers, "the plan does not say what it assumed"
+    assert d["estimate_s"] == pytest.approx(
+        round(estimate_s(d["cells"], "dev", workers=workers, cycles=60), 1)
+    )
+    if workers > 1:
+        assert d["estimate_s"] < estimate_s(d["cells"], "dev", cycles=60), (
+            "the estimate is still priced for a single core"
+        )
+
+
+def test_smoke_stays_serial_and_says_so() -> None:
+    """The one tier where the pool costs more than it saves. Asserted so the
+    estimate and the run cannot drift apart again."""
+    from scionarena.cockpit.panels import workers_for
+
+    assert workers_for("smoke", 400) == 1
+    assert workers_for("dev", 400) >= 1
+    assert workers_for("dev", 1) == 1, "never more workers than there are cells"

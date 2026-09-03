@@ -49,7 +49,7 @@ from ..bench.axes import AXES, baseline_cell
 from ..bench.results import load_results
 from ..bench.sweep import SweepSpec, plan, run_sweep
 from ..instrument.channel import FrameLog
-from .panels import catalogue, estimate_s, selection
+from .panels import catalogue, estimate_s, selection, workers_for
 
 __all__ = ["main", "serve", "Cockpit", "Run", "plan_for"]
 
@@ -125,7 +125,7 @@ class Cockpit:
                 run.directory,
                 on_cell=on_cell,
                 watch=self.frames.queue,
-                workers=1 if run.spec.tier == "smoke" else None,
+                workers=workers_for(run.spec.tier, run.total),
             )
             run.state = "stopped" if run.stop else "done"
         except Exception as exc:  # noqa: BLE001 -- a failed run is a reported state
@@ -474,9 +474,11 @@ def plan_for(form: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 -- a bad form is a message, not a 500
         return {"error": f"{type(exc).__name__}: {exc}"}
     cells = len(plan(spec))
-    seconds = estimate_s(cells, spec.tier, cycles=spec.cycles)
+    workers = workers_for(spec.tier, cells)
+    seconds = estimate_s(cells, spec.tier, workers=workers, cycles=spec.cycles)
     return {
         "cells": cells,
+        "workers": workers,
         "estimate_s": round(seconds, 1),
         "estimate": _human(seconds),
         "omitted": chose["omitted"],

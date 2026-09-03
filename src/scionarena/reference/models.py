@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from ..exposure.contracts import (
     SLA,
@@ -520,6 +521,37 @@ class ReferenceStochastic:
         )
 
 
+class FrozenConformal(ReferenceStochastic):
+    """``ReferenceStochastic`` with the adaptation switched off. It fails R13.
+
+    Invariant 6 says a probe ships with a reference model that fails it, and R13
+    did not have one: the only model that failed it was a subclass defined inside
+    a test, overriding a class constant no constructor exposes. A reviewer asking
+    "what does failing R13 look like" had nothing in the catalogue to point at,
+    and a probe whose failing case exists only in the test that asserts it is a
+    probe nobody can independently check.
+
+    The defect is one line wide and completely realistic: an interval calibrated
+    once and then trusted. It predicts as well as its parent right up until the
+    world moves, at which point its coverage falls to whatever the new regime
+    gives it and stays there -- 0.67 before the shift, 0.47 after, 0.47 for the
+    rest of the run. Nothing in its point estimates looks wrong, which is the
+    reason the probe has to exist.
+    """
+
+    #: No adaptation. The parent's step is 0.06.
+    ETA_ACI = 0.0
+
+    def __init__(self, eta0: float = 2.0, lam_age: float = 0.02, msa_iters: int = 40):
+        super().__init__(eta0=eta0, lam_age=lam_age, msa_iters=msa_iters)
+        self.capabilities = replace(
+            self.capabilities,
+            name="FrozenConformal",
+            architecture="stochastic",
+            notes="calibrated once, never re-calibrated; ships to fail R13",
+        )
+
+
 # Imported here rather than at the top because the only thing this module wants
 # from it is the registry entry, and ``layered`` imports nothing from here.
 from .layered import LayeredRanker  # noqa: E402
@@ -534,3 +566,11 @@ REFERENCE_MODELS = {
     # pinned into the trace, where a deliberate FAIL would read as a regression.
     "layered": LayeredRanker,
 }
+
+# ``FrozenConformal`` is deliberately absent from the mapping above and present
+# in ``exposure.loading.BUILTIN_MODELS`` instead, which is the same slot
+# ``gbdt``, ``llm`` and ``prober`` occupy: loadable by name, not folded into the
+# pinned conformance trace. It exists to fail R13, and this registry is what
+# ``tests/test_trace.py`` hashes -- a deliberate FAIL pinned there would read as
+# a regression on every future diff, which is the reason the R11 case is
+# reachable as a constructor flag rather than as its own entry.

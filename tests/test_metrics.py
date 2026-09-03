@@ -365,3 +365,26 @@ def test_the_truth_series_is_keyed_the_way_a_model_names_a_path() -> None:
 
     for value in (0, 1, 2252810224849662535, 2**64 - 1, -3):
         assert path_name(value) == _hex(value)
+
+
+def test_mean_deviation_is_measured_on_the_same_band_as_its_siblings() -> None:
+    """Names the bug: ``mean_deviation`` was the one metric in the decision
+    family that did not trim the warmup, while ``regret_ms``, ``regret_ratio``
+    and ``mean_cost_ms`` beside it on the same report row all did. The loop opens
+    from a uniform split and takes the warmup to converge, so the untrimmed mean
+    read 0.46 where the steady-state figure was 0.02 -- two numbers presented as
+    though measured on the same basis when they were not."""
+    n = 80
+    series = Series(interval_s=1.0)
+    series.times = [float(i) for i in range(n)]
+    series.mean_cost_ms = [10.0] * n
+    series.best_cost_ms = [10.0] * n
+    warm = MetricInput(series=series).band["warmup"]
+    assert 0 < warm < n, "the fixture must actually straddle the warmup"
+    series.deviation = [0.9] * warm + [0.02] * (n - warm)
+
+    out = compute(MetricInput(series=series), families=["decision"])
+    assert out["mean_deviation"] == pytest.approx(0.02, abs=1e-9), (
+        "the opening transient is in the number: it is not comparable with the "
+        "regret figures printed next to it"
+    )

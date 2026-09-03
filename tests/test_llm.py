@@ -446,3 +446,47 @@ def test_retention_still_decides_what_survives_the_turn() -> None:
     assert agent._last_seen("pA", fresh) == pytest.approx(21.0)
     agent._remember((), fresh)
     assert agent._last_seen("pA") is None, "retain=none keeps nothing across turns"
+
+
+def test_a_path_with_no_estimate_is_not_treated_as_free() -> None:
+    """Names the bug: the prompt carries 0.0 for any path the model's predictor
+    produced nothing for, and the scripted policy wrote ``min(...) or 1.0`` --
+    which reads a true minimum of zero as falsy -- then filtered on ``v > 0``.
+    The unestimated path was dropped from the split entirely, so it never carried
+    traffic, so it was never observed: the policy made its own blind spot
+    permanent while reporting a clean weighting."""
+    prompt = Prompt(
+        src="1-ff00:0:1",
+        dst="1-ff00:0:2",
+        paths=(("pA", 3, 0.0, None), ("pB", 4, 10.0, None), ("pC", 5, 25.0, None)),
+        kept=(),
+        fresh=(),
+        turn=1,
+        slot_s=1.0,
+        probes_left=0.0,
+    )
+    turn = ScriptedTransport().decide(prompt)
+    assert set(turn.weights) == {"pA", "pB", "pC"}, "an unestimated path was deleted"
+    assert turn.weights["pB"] > turn.weights["pA"], (
+        "the path with a real, best estimate must outrank one with no estimate"
+    )
+    assert turn.weights["pA"] == pytest.approx(turn.weights["pC"]), (
+        "an unestimated path is weighted as the worst known one, not as free"
+    )
+
+
+def test_every_estimate_missing_is_still_a_decision() -> None:
+    """The degenerate case the same line used to divide by zero on."""
+    prompt = Prompt(
+        src="a",
+        dst="b",
+        paths=(("pA", 3, 0.0, None), ("pB", 4, 0.0, None)),
+        kept=(),
+        fresh=(),
+        turn=1,
+        slot_s=1.0,
+        probes_left=0.0,
+    )
+    turn = ScriptedTransport().decide(prompt)
+    assert set(turn.weights) == {"pA", "pB"}
+    assert all(w > 0.0 for w in turn.weights.values())

@@ -63,6 +63,9 @@ BUILTIN_MODELS: Final[Mapping[str, str]] = {
     "minrtt": "scionarena.reference.models:MinRTTGreedy",
     "proportional": "scionarena.reference.models:CapacityProportional",
     "reference": "scionarena.reference.models:ReferenceStochastic",
+    # Ships to fail R13 (invariant 6). Loadable by name so a reviewer can see
+    # what failing that probe looks like without reading the test suite.
+    "frozen": "scionarena.reference.models:FrozenConformal",
     "prober": "scionarena.reference.agents:BudgetedProber",
     "gbdt": "scionarena.reference.trees:GradientBoosted",
     "layered": "scionarena.reference.layered:LayeredRanker",
