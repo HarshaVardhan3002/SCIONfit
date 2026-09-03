@@ -36,7 +36,7 @@ from ..core.trace import TraceHash
 from ..exposure.loading import ModelLoadError, load_model, resolve
 from ..exposure.loop import LoopConfig, busiest_scopes, resolve_drive, run_loop
 from ..reference.baselines import MANDATORY_BASELINES
-from .axes import AXES, baseline_cell, settings_for
+from .axes import AXES, baseline_cell, settings_for, timeline_for
 from .results import REFUSED, CellResult, cell_id, cell_seed, load_results, write_result
 
 __all__ = ["Cell", "SweepSpec", "plan", "run_cell", "run_sweep"]
@@ -302,6 +302,10 @@ def _scenario(spec: SweepSpec, cell: Cell, seed: int) -> Scenario:
         topology=TopologySpec(tier=spec.tier),
         probe_limits=ProbeLimits(**probes),
         hosts=HostParams(**hosts),
+        # The scenario axis. Times are fractions of the run, so a cell of six
+        # rounds and a cell of six hundred put the fault at the same point of
+        # the episode rather than at the same second (ADR 0022).
+        disturbances=timeline_for(cell.axes),
     )
 
 

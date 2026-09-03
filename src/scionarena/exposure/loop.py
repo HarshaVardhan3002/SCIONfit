@@ -201,6 +201,11 @@ class LoopResult:
     #: what it looks like it says: the model missed its slot this many times.
     overruns: int = 0
     wall_clock_s: float = 0.0
+    #: ``(simulated seconds, kind)`` for every event the substrate installed,
+    #: including the ones a ``Disturbance`` expanded into (ADR 0022). The only
+    #: thing that tells a recovery metric when the bad day started, and read by
+    #: nothing the model can reach.
+    events: list[tuple[float, str]] = field(default_factory=list)
     session_summary: dict[str, Any] = field(default_factory=dict)
     hosts_summary: dict[str, Any] = field(default_factory=dict)
 
@@ -353,6 +358,7 @@ class LoopResult:
             wall_clock_s=self.wall_clock_s,
             session=dict(self.session_summary),
             hosts=dict(self.hosts_summary),
+            events=list(self.events),
         )
 
     def metrics(self, *, families: Sequence[str] = ()) -> dict[str, float | None]:
@@ -460,6 +466,10 @@ def run_loop(
         config=cfg,
         drive=drive,
         think=cfg.think,
+        # Taken from the substrate rather than from ``scenario.timeline``,
+        # because a ``Disturbance`` is only concrete once the topology exists and
+        # a recovery metric needs the instant, not the intent.
+        events=[(e.at_s, e.kind) for e in world.timeline],
     )
     tracked = _tracked_ifaces(world, indices, cfg.n_tracked)
 

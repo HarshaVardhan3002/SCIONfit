@@ -64,6 +64,7 @@ SUPPORT_OF: Mapping[str, str] = {
     "decision": "n_cost_samples",
     "stability": "n_samples",
     "operational": "n_decisions",
+    "recovery": "n_faults",
 }
 
 #: What a family is read on at a glance. Accuracy has none because it is
@@ -761,6 +762,26 @@ def _family_section(
 
     story.append(PageBreak())
     story.append(_paragraph(f"{family.capitalize()}", sheet["H2"]))
+    if family == "recovery":
+        # Printed on the section rather than buried in the limits, because the
+        # one misreading that matters here is taking a blank as a zero: a cell
+        # with no scheduled fault has nothing to recover from, and so does a
+        # cell whose fault landed on links this run was not using (ADR 0022).
+        story.append(
+            _paragraph(
+                "The bad day, scored apart from the ordinary one. Nothing on this page is "
+                "averaged into anything on the pages before it, and there is deliberately no "
+                "combined survival score: a model can be excellent in ordinary flight and "
+                "useless after a fault, and an aggregate is the number that would hide it. "
+                "A blank is not a zero. It means this cell had no scheduled fault, or had one "
+                "that never moved its cost out of the pre-fault band. Two different things put a "
+                "cell in the second case, and both are findings rather than gaps: the fault "
+                "landed on links this run was not using, or <b>the model was already swinging "
+                "wider than the fault</b>. Scoring either as a flawless recovery would credit a "
+                "model for where the dice fell, or for being too unstable to disturb.",
+                sheet["Body"],
+            )
+        )
 
     bases: dict[str, list[str]] = {}
     for name in metrics:
@@ -994,6 +1015,16 @@ def _limits(story: list[Any], sheet: Any, data: ReportData) -> None:
         "it ran on, so <i>wall_clock_s</i> and the decision-latency percentiles compare "
         "models only within this run, on whatever took it. A result file reproduces the "
         "world exactly and the measurement only on the machine that made it.",
+        "<b>Recovery and steady state are two different questions</b> and the report answers "
+        "them apart. <i>recovered</i> is deliberately separate from <i>time_to_recover_s</i>: a "
+        "model that never came back has no time to report, a missing time renders as "
+        "<i>not measured</i>, and that is exactly how a model which never recovered would score "
+        "like a model nobody watched."
+        if "recovery" in data.metrics_by_family
+        else "<b>Nothing went wrong in this suite.</b> Every cell ran the <i>steady</i> scenario, "
+        "so the recovery family is empty and these numbers describe ordinary flight only. A "
+        "model that is excellent here and useless after an outage would look identical on this "
+        "page; sweep the <i>scenario</i> axis to find out which one this is.",
         "<b>The harness does not summarise for the model</b> and there is no loss curve here. "
         "This evaluates trained models; it does not train them, and a model's own learning "
         "dynamics are outside what any cell recorded.",

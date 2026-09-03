@@ -1,10 +1,18 @@
-"""The six axes a sweep varies, and what each value means to the substrate.
+"""The seven axes a sweep varies, and what each value means to the substrate.
 
 Master Spec §28 and its M4½ name five -- population size, defector fraction, the
 mechanism ladder, paths per selector, staleness -- and Q6 made the probe-limit
 regime a sixth by moving it out of ``exposure`` and into the scenario, where two
 runs made under different assumptions about the price of information stop being
 the same experiment.
+
+The seventh is ``scenario`` and it is a different kind of thing: the six vary a
+*condition* held for the whole run, and a scenario is an **event schedule**. M6
+names ten of them and none of them was expressible until ADR 0022, because a
+timeline event names a link by index and an axis cannot know one. Its payload is
+therefore a tuple of :class:`Disturbance` -- when, as a fraction of the run, and
+how much, as a fraction of the links -- expanded against the real topology at
+build time.
 
 An axis value is a *label* and a payload. The label is what appears in a result
 file, a report and a filename; the payload is the overrides it applies. Nothing
@@ -20,7 +28,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Axis", "AXES", "AxisValue", "baseline_cell", "settings_for"]
+from ..core.scenario import Disturbance
+
+__all__ = ["Axis", "AXES", "AxisValue", "baseline_cell", "settings_for", "timeline_for"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +44,10 @@ class AxisValue:
     loop: Mapping[str, Any] = field(default_factory=dict)
     #: Fields of ``ProbeLimits`` this value overrides.
     probes: Mapping[str, Any] = field(default_factory=dict)
+    #: Faults this value schedules. Only the ``scenario`` axis uses it, and it is
+    #: additive rather than an override: a value contributes its disturbances to
+    #: the cell's timeline the way the others contribute settings.
+    disturbances: tuple[Disturbance, ...] = ()
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +56,19 @@ class AxisValue:
             "hosts": dict(self.hosts),
             "loop": dict(self.loop),
             "probes": dict(self.probes),
+            # In the digest, so correcting a fault's severity invalidates the
+            # cells recorded under the old one rather than silently changing
+            # what their scores mean.
+            "disturbances": [
+                {
+                    "kind": d.kind,
+                    "at_frac": d.at_frac,
+                    "fraction": d.fraction,
+                    "count": d.count,
+                    "params": dict(d.params),
+                }
+                for d in self.disturbances
+            ],
         }
 
 
@@ -152,7 +179,86 @@ AXES: Mapping[str, Axis] = {
             ),
         ),
     ),
+    # The seventh axis, and the only one that is not a *condition*. Every axis
+    # above holds something fixed for the whole run; this one schedules an event
+    # and asks what happened next (ADR 0022). Its payload is a tuple of
+    # ``Disturbance``, described against the topology's shape because an axis
+    # cannot know a link index and a tier does not promise one.
+    "scenario": Axis(
+        name="scenario",
+        doc="what goes wrong, and when -- the only axis that is an event rather than a condition",
+        values=(
+            AxisValue("steady", note="nothing happens; the ordinary flight"),
+            AxisValue(
+                "outage",
+                disturbances=(
+                    Disturbance(
+                        "link_degrade",
+                        at_frac=0.35,
+                        fraction=0.10,
+                        params={"factor": 0.15},
+                        note="engine failure",
+                    ),
+                    Disturbance("link_restore", at_frac=0.65, note="and the repair"),
+                ),
+                note="a tenth of the links fall over and come back; the one that "
+                "asks how long recovery takes",
+            ),
+            AxisValue(
+                "brownout",
+                disturbances=(
+                    Disturbance(
+                        "link_degrade", at_frac=0.40, fraction=0.30, params={"factor": 0.6}
+                    ),
+                ),
+                note="a third of the links get worse and stay worse; nothing to "
+                "recover to, so the question is where the model settles",
+            ),
+            AxisValue(
+                "filtered",
+                disturbances=(
+                    Disturbance("as_policy_filter", at_frac=0.40, fraction=0.20),
+                    Disturbance("as_policy_unfilter", at_frac=0.70),
+                ),
+                note="paths vanish from path-server answers with nothing physical "
+                "happening -- the failure a link metric cannot see",
+            ),
+            AxisValue(
+                "surge",
+                disturbances=(
+                    Disturbance("demand_surge", at_frac=0.40, params={"mbps": 400.0}),
+                    Disturbance("demand_clear", at_frac=0.70),
+                ),
+                note="exogenous load nobody advised, on every interface at once",
+            ),
+            AxisValue(
+                "regime-shift",
+                disturbances=(
+                    Disturbance("demand_surge", at_frac=0.30, params={"mbps": 250.0}),
+                    Disturbance(
+                        "link_degrade", at_frac=0.30, fraction=0.15, params={"factor": 0.5}
+                    ),
+                ),
+                note="the world changes and does not change back; what a model "
+                "fitted on the first half is wrong about for the second",
+            ),
+        ),
+    ),
 }
+
+
+def timeline_for(cell: Mapping[str, str]) -> tuple[Disturbance, ...]:
+    """The faults one cell schedules, in ``AXES`` order.
+
+    Separate from :func:`settings_for` because these are additive rather than
+    overriding: two axes that both scheduled a fault would both get it, whereas
+    two axes that both set ``k_paths`` cannot both win.
+    """
+    out: list[Disturbance] = []
+    for name, axis in AXES.items():
+        value = axis.value(cell[name]) if name in cell else axis.values[0]
+        out.extend(value.disturbances)
+    return tuple(out)
 
 
 def baseline_cell() -> dict[str, str]:

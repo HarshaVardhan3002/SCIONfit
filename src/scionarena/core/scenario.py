@@ -57,6 +57,7 @@ __all__ = [
     "SearchSpec",
     "ProbeLimits",
     "TimelineEvent",
+    "Disturbance",
     "Scenario",
     "Substrate",
 ]
@@ -254,6 +255,92 @@ class TimelineEvent:
         object.__setattr__(self, "params", dict(self.params))
 
 
+#: Which population a :class:`Disturbance` draws its targets from. A kind not
+#: listed here has nothing to sample, so it is scheduled once with whatever
+#: parameters it was given.
+_DRAWS_FROM: Final = {
+    "link_degrade": "links",
+    "as_policy_filter": "ases",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Disturbance:
+    """A scheduled fault, described against the topology's *shape*.
+
+    A :class:`TimelineEvent` names one link by index, which is right for a
+    hand-written scenario and impossible for an axis. ``Tier.n_links`` is
+    documented as a target the generator hits within a few, so an axis value
+    written against one tier's indices is refused at another -- and an axis whose
+    meaning depends on the tier is not an axis (ADR 0022).
+
+    So a disturbance says *when* as a fraction of the run and *how much* as a
+    fraction of the links or ASes, and :meth:`Substrate._install_timeline`
+    expands it into ordinary events once the topology exists. Which links is
+    drawn from the scenario seed, so the same seed gets the same bad day and both
+    halves of a parity pair face it.
+    """
+
+    kind: str
+    #: When, as a fraction of the run. 0.0 is before the model has seen
+    #: anything, 1.0 is after the last decision; the interesting range is the
+    #: middle, and a value outside [0, 1] is refused.
+    at_frac: float
+    #: Of the links (or ASes) this kind draws from. Ignored when the kind draws
+    #: from nothing.
+    fraction: float = 0.0
+    #: An absolute count, used instead of ``fraction`` when it is non-zero. For
+    #: a scenario that wants "one link" regardless of tier.
+    count: int = 0
+    params: Mapping[str, Any] = field(default_factory=dict)
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if self.kind not in EVENT_KINDS and not self.kind.startswith(EXTENSION_PREFIX):
+            raise ValueError(
+                f"unknown disturbance kind {self.kind!r}; known kinds are {list(EVENT_KINDS)}"
+            )
+        if not 0.0 <= self.at_frac <= 1.0:
+            raise ValueError(
+                f"at_frac is a fraction of the run and must be in [0, 1], got {self.at_frac}"
+            )
+        if not 0.0 <= self.fraction <= 1.0:
+            raise ValueError(f"fraction must be in [0, 1], got {self.fraction}")
+        if self.count < 0:
+            raise ValueError("count must not be negative")
+
+    def expand(self, topology: Topology, duration_s: float, seed: int) -> tuple[TimelineEvent, ...]:
+        """The concrete events this disturbance becomes on *this* topology.
+
+        Rounded to a whole second because a fault at 731.4 s reads as a
+        measurement rather than a decision, and the recovery window is measured
+        on a grid of whole seconds anyway.
+        """
+        at_s = round(self.at_frac * duration_s, 3)
+        draws = _DRAWS_FROM.get(self.kind)
+        if draws is None:
+            return (
+                TimelineEvent(at_s=at_s, kind=self.kind, params=dict(self.params), note=self.note),
+            )
+        total = topology.n_links if draws == "links" else topology.n_ases
+        want = self.count if self.count else int(round(self.fraction * total))
+        want = max(0, min(total, want))
+        if want == 0:
+            return ()
+        rng = np.random.default_rng([seed, want, int(at_s * 1000), len(self.kind)])
+        picked = sorted(int(i) for i in rng.choice(total, size=want, replace=False))
+        field_name = "link" if draws == "links" else "as_"
+        return tuple(
+            TimelineEvent(
+                at_s=at_s,
+                kind=self.kind,
+                params={field_name: index, **self.params},
+                note=self.note,
+            )
+            for index in picked
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Scenario:
     """A world, and what happens to it. The unit two people compare results on."""
@@ -283,6 +370,10 @@ class Scenario:
     #: and nothing in either run's output would say they differed.
     hosts: HostParams = field(default_factory=HostParams)
     timeline: tuple[TimelineEvent, ...] = ()
+    #: Faults described against the topology's shape rather than its indices,
+    #: expanded into ``timeline`` events at build time (ADR 0022). This is what
+    #: the ``scenario`` axis carries, because an axis cannot know a link index.
+    disturbances: tuple[Disturbance, ...] = ()
     schema: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -336,6 +427,17 @@ class Scenario:
             {"at_s": e.at_s, "kind": e.kind, "params": dict(e.params), "note": e.note}
             for e in self.timeline
         ]
+        data["disturbances"] = [
+            {
+                "kind": d.kind,
+                "at_frac": d.at_frac,
+                "fraction": d.fraction,
+                "count": d.count,
+                "params": dict(d.params),
+                "note": d.note,
+            }
+            for d in self.disturbances
+        ]
         return data
 
     @classmethod
@@ -356,6 +458,10 @@ class Scenario:
         if "timeline" in kwargs:
             kwargs["timeline"] = tuple(
                 _from_mapping(TimelineEvent, e, "timeline event") for e in kwargs["timeline"]
+            )
+        if "disturbances" in kwargs:
+            kwargs["disturbances"] = tuple(
+                _from_mapping(Disturbance, d, "disturbance") for d in kwargs["disturbances"]
             )
         return cls(**kwargs)
 
@@ -475,7 +581,18 @@ class Substrate:
     def _install_timeline(self) -> None:
         for kind in EVENT_KINDS:
             self.clock.on(kind, self._apply)
-        for event in self.scenario.timeline:
+        expanded: list[TimelineEvent] = list(self.scenario.timeline)
+        for disturbance in self.scenario.disturbances:
+            expanded.extend(
+                disturbance.expand(self.topology, self.scenario.duration_s, self.scenario.seed)
+            )
+        #: What this world *does*, as against ``scenario.timeline``, which is what
+        #: was written by hand. Read by ``instrument`` so a recovery metric knows
+        #: when the bad day started; nothing the model can reach may read it.
+        self.timeline: tuple[TimelineEvent, ...] = tuple(
+            sorted(expanded, key=lambda e: (e.at_s, e.kind))
+        )
+        for event in self.timeline:
             self._validate(event)
             self.clock.at(
                 event.at_s,

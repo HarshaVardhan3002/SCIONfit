@@ -277,7 +277,8 @@ def test_every_axis_value_lands_somewhere() -> None:
         for value in axis.values:
             if value is axis.values[0]:
                 continue  # the baseline is allowed to be the empty override
-            assert value.hosts or value.loop or value.probes, f"{name}={value.label} does nothing"
+            payload = value.hosts or value.loop or value.probes or value.disturbances
+            assert payload, f"{name}={value.label} does nothing"
 
 
 def test_the_population_axis_reaches_the_driver_and_not_only_the_scenario() -> None:

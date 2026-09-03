@@ -1,4 +1,4 @@
-"""The metric registry. Four families, one bundle, no runner that knows the names.
+"""The metric registry. Five families, one bundle, no runner that knows the names.
 
 A metric is a registered function of one :class:`MetricInput`. It returns a float
 **or a mapping**, and a mapping is flattened into ``name.key`` -- which is how
@@ -42,7 +42,14 @@ __all__ = [
 
 #: The four families of Master Spec §28, in report order. A metric outside them
 #: is refused at registration rather than silently filed under "other".
-FAMILIES = ("accuracy", "decision", "stability", "operational")
+#:
+#: ``recovery`` is not one of the spec's four and is deliberately last: it
+#: scores what happened after a scheduled fault, and it is a family of its
+#: own precisely so that nothing aggregates it together with the
+#: steady-state numbers (ADR 0022). A model can be excellent in ordinary
+#: flight and useless in the bad case, and an average over the two is the
+#: number that would hide it.
+FAMILIES = ("accuracy", "decision", "stability", "operational", "recovery")
 
 #: Nominal coverage of the interval a distributional model is asked for, and the
 #: step size of the adaptive-conformal update (§19.5). ``eta`` is the spec's own
@@ -85,6 +92,11 @@ class MetricInput:
     wall_clock_s: float = 0.0
     session: Mapping[str, Any] = field(default_factory=dict)
     hosts: Mapping[str, Any] = field(default_factory=dict)
+    #: ``(simulated seconds, kind)`` for every event the scenario scheduled, as
+    #: the substrate actually installed them rather than as they were written.
+    #: Empty for a run with no bad day, which is why every recovery metric
+    #: returns ``None`` there rather than a score (ADR 0022).
+    events: Sequence[tuple[float, str]] = ()
 
     @property
     def band(self) -> dict[str, Any]:
@@ -636,3 +648,216 @@ def n_decisions(data: MetricInput) -> float | None:
     would say otherwise.
     """
     return float(len(data.latency_s))
+
+
+# --------------------------------------------------------------------------
+# recovery: the bad day, and only the bad day (ADR 0022)
+#
+# Everything above scores an episode as a whole, which is the right shape for a
+# question about ordinary flight and the wrong shape for the question the
+# product is actually for. An outage is thirty samples out of six hundred: a
+# model that never comes back and a model that comes back in nine seconds land
+# within noise of each other on every metric above, because the mean swallows
+# the difference.
+#
+# These five read the same series against the scenario's own event timeline, and
+# they are a family of their own so that nothing ever averages them together
+# with the steady-state ones. That separation is the point; a combined score
+# would be the number a reader quotes, and it would let a model that is
+# excellent in the ordinary case and useless in the bad one look deployable.
+
+
+#: Samples before the fault used to establish where the model was operating.
+#: Enough that a single noisy sample cannot set the band, short enough that it
+#: is still the same regime.
+_BASELINE_SAMPLES = 10
+#: How far above the pre-event mean still counts as "back", as a multiple of the
+#: pre-event standard deviation, with a floor and a cap.
+#:
+#: The floor is so that a model whose pre-fault series is flat does not get an
+#: impossibly tight band. The cap is the one that was measured rather than
+#: chosen: a visibly oscillating model has a pre-fault standard deviation of the
+#: same order as its mean, so an uncapped two-sigma band sits at three times the
+#: operating cost, and a fault that *tripled* the cost of the network never
+#: registered as a disturbance at all. The metric was silently useless for
+#: exactly the models it is most needed for. Beyond half again, a band has
+#: stopped being a band.
+_BAND_SIGMA = 2.0
+_BAND_FLOOR = 0.05
+_BAND_CAP = 0.5
+#: Consecutive in-band samples required. One sample inside the band on the way
+#: through is a crossing, not a recovery.
+_HOLD = 3
+#: Events that are bookkeeping rather than weather. An advisory reaching the
+#: hosts is the loop working, not the world going wrong.
+_NOT_A_FAULT = frozenset({"advisory_apply"})
+
+
+def _fault_at(data: MetricInput) -> float | None:
+    """When the bad day started, or ``None`` if the run had no bad day."""
+    times = [t for t, kind in data.events if kind not in _NOT_A_FAULT]
+    return min(times) if times else None
+
+
+@dataclass(frozen=True, slots=True)
+class _Window:
+    """One run's bad day, located on the sample grid."""
+
+    #: When the first scheduled fault fired.
+    at_s: float
+    #: The last ``_BASELINE_SAMPLES`` finite samples before it.
+    pre: np.ndarray
+    #: Every sample from the fault onward.
+    post: np.ndarray
+    #: When ``post[0]`` was taken.
+    post_t0: float
+    #: Index into ``post`` of the first sample that left the band. Recovery is
+    #: searched from here, never from the fault: the fault does not land on the
+    #: sample that follows it, and a search that started at the fault would find
+    #: the still-unaffected samples immediately and report a recovery of zero
+    #: seconds for a model that had not yet been disturbed.
+    onset: int
+    #: The pre-fault band's ceiling.
+    ceiling: float
+
+
+def _recovery_window(data: MetricInput) -> _Window | None:
+    """Where the bad day is on the grid, or ``None`` if there is nothing to say.
+
+    Four separate "nothing to say" cases, all of which must return ``None``
+    rather than a score: no fault was scheduled; the fault landed before there
+    was enough series to set a baseline from; the series is empty; and -- the one
+    that matters -- **the fault never disturbed this run**. A degrade that lands
+    on links no driven scope was using is a real event that changed nothing here,
+    and scoring it as a flawless recovery would hand a model credit for where the
+    dice fell.
+
+    The last case has a second cause worth naming, because it was measured on the
+    smoke tier before this docstring existed: a model whose pre-fault cost was
+    already swinging between 300 ms and 3,600 ms is not disturbed by a fault that
+    doubles the mean, and the honest reading is that its own oscillation is wider
+    than the weather. That is a finding about the model, and it belongs to the
+    stability family rather than being smuggled into a recovery score.
+    """
+    at = _fault_at(data)
+    if at is None:
+        return None
+    times = np.asarray(data.series.times, dtype=np.float64)
+    cost = np.asarray(data.series.mean_cost_ms, dtype=np.float64)
+    if times.size == 0 or cost.size != times.size:
+        return None
+    before = np.flatnonzero(times < at)
+    after = np.flatnonzero(times >= at)
+    if before.size < _BASELINE_SAMPLES or after.size < _HOLD:
+        return None
+    pre = cost[before[-_BASELINE_SAMPLES:]]
+    pre = pre[np.isfinite(pre)]
+    if pre.size < 2 or float(np.mean(pre)) <= 0.0:
+        return None
+    post = cost[after]
+    ceiling = _band(pre)
+    out = np.flatnonzero(np.isfinite(post) & (post > ceiling))
+    if out.size == 0:
+        return None
+    return _Window(
+        at_s=at,
+        pre=pre,
+        post=post,
+        post_t0=float(times[after[0]]),
+        onset=int(out[0]),
+        ceiling=ceiling,
+    )
+
+
+def _band(pre: np.ndarray) -> float:
+    mean = float(np.mean(pre))
+    spread = _BAND_SIGMA * float(np.std(pre))
+    return mean + min(max(spread, _BAND_FLOOR * abs(mean)), _BAND_CAP * abs(mean))
+
+
+def _recovered_index(post: np.ndarray, ceiling: float) -> int | None:
+    """First index of ``_HOLD`` consecutive in-band samples, or ``None``."""
+    ok = np.isfinite(post) & (post <= ceiling)
+    run = 0
+    for index, good in enumerate(ok):
+        run = run + 1 if good else 0
+        if run >= _HOLD:
+            return index - _HOLD + 1
+    return None
+
+
+@metric("recovered", "recovery", higher_is_better=True)
+def recovered(data: MetricInput) -> float | None:
+    """Did the cost return to its pre-fault band before the run ended.
+
+    Separate from ``time_to_recover_s`` and not derivable from it, because a
+    model that never recovered has no time to report and a ``None`` renders as
+    *not measured*. That is exactly how a model which never came back would
+    score like a model nobody watched.
+    """
+    window = _recovery_window(data)
+    if window is None:
+        return None
+    return 1.0 if _recovered_index(window.post[window.onset :], window.ceiling) is not None else 0.0
+
+
+@metric("time_to_recover_s", "recovery")
+def time_to_recover_s(data: MetricInput) -> float | None:
+    """Simulated seconds from the fault until the cost held its pre-fault band."""
+    window = _recovery_window(data)
+    if window is None:
+        return None
+    index = _recovered_index(window.post[window.onset :], window.ceiling)
+    if index is None:
+        return None
+    interval = data.series.interval_s or 1.0
+    at_recovery = window.post_t0 + (window.onset + index) * interval
+    return max(0.0, at_recovery - window.at_s)
+
+
+@metric("cost_during_recovery", "recovery")
+def cost_during_recovery(data: MetricInput) -> float | None:
+    """Mean fractional excess over the pre-fault level while the cost was away.
+
+    A fraction rather than milliseconds so a smoke-tier run and a realistic one
+    are on the same scale, and measured to the end of the run when there was no
+    recovery -- charging a model for the whole time it stayed broken is the
+    correct accounting, and it is what makes this readable beside ``recovered``.
+    """
+    window = _recovery_window(data)
+    if window is None:
+        return None
+    mean = float(np.mean(window.pre))
+    away = window.post[window.onset :]
+    index = _recovered_index(away, window.ceiling)
+    span = away[: index + _HOLD] if index is not None else away
+    span = span[np.isfinite(span)]
+    if span.size == 0:
+        return None
+    return float(np.mean(np.maximum(0.0, span - mean) / mean))
+
+
+@metric("recovered_to", "recovery")
+def recovered_to(data: MetricInput) -> float | None:
+    """The operating point it settled at, over the one it started from.
+
+    1.0 is back where it was; 1.4 is a network that is permanently forty per cent
+    worse under this model, and a run reporting only ``recovered`` would call
+    that a success. Measured over the last quarter of the post-fault series so a
+    single late sample cannot set it.
+    """
+    window = _recovery_window(data)
+    if window is None:
+        return None
+    post = window.post
+    tail = post[max(1, len(post) * 3 // 4) :]
+    tail = tail[np.isfinite(tail)]
+    if tail.size == 0:
+        return None
+    return float(np.mean(tail) / np.mean(window.pre))
+
+
+@metric("n_faults", "recovery", higher_is_better=True, support=True)
+def n_faults(data: MetricInput) -> float | None:
+    """Scheduled events this run had. Zero is a steady cell, not a missing figure."""
+    return float(len([1 for _, kind in data.events if kind not in _NOT_A_FAULT]))
