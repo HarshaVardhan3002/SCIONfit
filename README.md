@@ -1,9 +1,25 @@
-# scionfit
+<div align="center">
+
+# scionfit · scionarena
 
 **Conformance and fit checking for SCION path-selection models.**
 
-Existing SCION benchmarks answer *"is your prediction accurate?"*
+Existing SCION benchmarks answer *"is your prediction accurate?"*<br>
 `scionfit` answers a different question: **"does your model survive being deployed alongside other copies of itself?"**
+
+![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+![Dependencies](https://img.shields.io/badge/runtime%20deps-none-2b3137)
+![Milestone](https://img.shields.io/badge/milestone-M3%20done%20%C2%B7%20M4%20in%20progress-2b3137)
+[![License: MIT](https://img.shields.io/badge/license-MIT-3776ab)](LICENSE)
+
+<img src="docs/media/m4-path-share.png" width="880" alt="Share of one path over 240 decision rounds: the greedy model's population flips between 0 and 1 in a square wave, the stochastic model's population stays around 0.8">
+
+<sub>A committed run (<a href="docs/evidence/m4-smoke/report.html"><code>docs/evidence/m4-smoke</code></a>: smoke tier, 8 scopes, seed 7). Same world, same scopes, same seed; only the model differs.<br>
+<b>Red:</b> a greedy "pick the lowest RTT" model throws its whole population from one path to another and back. <b>Blue:</b> a stochastic model that spreads its advice stays put.</sub>
+
+[Install](#install) · [Use](#use) · [The ten probes](#the-ten-probes) · [Architecture](#system-architecture) · [Status](#status)
+
+</div>
 
 Those are not the same question, and only one of them is currently askable.
 
@@ -124,6 +140,11 @@ Verdicts: `CONFORMANT`, `PARTIAL`, `OPEN-LOOP ONLY`, `MISDECLARED`, `ERRORED`.
 
 ## System Architecture
 
+One substrate, several front-ends: conformance, bench, gym, agent and deploy all drive the same closed-loop world.
+
+<details>
+<summary><b>Open the architecture diagram</b></summary>
+
 ```mermaid
 flowchart TB
     subgraph Frontends["1. Front-Ends & Evaluation Harnesses (One Shared Substrate)"]
@@ -209,6 +230,8 @@ flowchart TB
     Scenario --> FidelityLadder
 ```
 
+</details>
+
 ---
 
 ## Where this sits relative to existing work
@@ -234,10 +257,10 @@ The project grew from the `scionfit` conformance checker (v0.1) into `scionarena
 
 | Milestone | State |
 |---|---|
-| M0 foundation reset, M1 substrate at realistic scale, M2 exposure layer | Done |
-| M3 closed loop (advice changes traffic, traffic changes the next observations) | Done, one criterion restated (below) |
-| M4 instrumentation and pathology detectors | In progress: sampling off the world clock is done |
-| M5 conformance v2 and later | Not started |
+| M0 foundation reset, M1 substrate at realistic scale, M2 exposure layer | ✅ Done |
+| M3 closed loop (advice changes traffic, traffic changes the next observations) | ✅ Done, one criterion restated (below) |
+| M4 instrumentation and pathology detectors | 🚧 In progress: sampling off the world clock is done |
+| M5 conformance v2 and later | ⏳ Not started |
 
 **The M3 result.** Two reference models run on one scenario, one seed and one set of scopes, so the only difference is the model. The greedy model throws its whole population from one path to another and back. Its oscillation amplitude is **6 to 19 times** that of the stochastic model, at 4 to 24 concurrent scopes (`docs/evidence/m3-scope-sweep.log`, re-measured in M4 on a fixed 30-second grid). The original pass mark, a spectral "peak dominance" index above 0.5, turned out not to be stable across scale or sample rate. It was replaced by the ratio between the two models, and the milestone notes say so in full.
 
