@@ -230,15 +230,22 @@ The design goal is that **one scenario definition drives all four tiers.** Tier 
 
 ## Status
 
-**v0.1, alpha.** Honest about what is and is not done.
+The project grew from the `scionfit` conformance checker (v0.1) into `scionarena`, one simulated SCION substrate with several front-ends. Work follows the milestones in [`docs/milestones/`](docs/milestones/):
 
-Working: the interface, all ten probes, the tier-1 world, four reference models, report rendering, CLI, tests, CI.
+| Milestone | State |
+|---|---|
+| M0 foundation reset, M1 substrate at realistic scale, M2 exposure layer | Done |
+| M3 closed loop (advice changes traffic, traffic changes the next observations) | Done, one criterion restated (below) |
+| M4 instrumentation and pathology detectors | In progress: sampling off the world clock is done |
+| M5 conformance v2 and later | Not started |
 
-Stubbed and explicitly not yet trustworthy: all three external adapters. The type mappings are written and the call shapes are fixed, but none has been validated against a live export or a running instance. See `docs/ADAPTERS.md`. Do not report tier 0/2/3 numbers until those are checked.
+**The M3 result.** Two reference models run on one scenario, one seed and one set of scopes, so the only difference is the model. The greedy model throws its whole population from one path to another and back. Its oscillation amplitude is **6 to 19 times** that of the stochastic model, at 4 to 24 concurrent scopes (`docs/evidence/m3-scope-sweep.log`, re-measured in M4 on a fixed 30-second grid). The original pass mark, a spectral "peak dominance" index above 0.5, turned out not to be stable across scale or sample rate. It was replaced by the ratio between the two models, and the milestone notes say so in full.
 
-Not yet built: the closed-loop benchmark tier (many agents, contention, oscillation metrics, axiomatic scoring). The conformance layer is a prerequisite for it and ships first.
+Still stubbed and not to be trusted: the three external adapters (`docs/ADAPTERS.md`). The type mappings are written, but none has been checked against a live export or a running instance.
 
-The tier-1 world is a deliberately small analytical model, not a network simulator. It models carefully exactly one thing: cost rises with load, and paths sharing a link are coupled. That is enough to interrogate a model's structure and not enough to draw performance conclusions from.
+The tier-1 world is a deliberately small analytical model, not a packet simulator. It models one thing carefully: cost rises with load, and paths that share a link are coupled.
+
+Related: [MARL_path_selector](https://github.com/HarshaVardhan3002/MARL_path_selector) trains decentralized path-selection policies with MAPPO, the kind of model this harness is built to test.
 
 ## Contributing
 
